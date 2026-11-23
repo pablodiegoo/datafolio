@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	_ "github.com/pablodiegoo/datafolio/internal/school/tufte"
+	"github.com/pablodiegoo/datafolio/internal/toolchain"
 	"github.com/pablodiegoo/datafolio/internal/version"
 )
 
@@ -20,12 +23,17 @@ const (
 
 // Options configures external IO and host environment paths for an in-process CLI execution.
 type Options struct {
-	Stdout   io.Writer
-	Stderr   io.Writer
-	WorkDir  string
-	HomeDir  string
-	CacheDir string
-	Version  string
+	Stdout         io.Writer
+	Stderr         io.Writer
+	WorkDir        string
+	HomeDir        string
+	CacheDir       string
+	Version        string
+	TypstRunner    toolchain.TypstRunner
+	ReleaseFetcher toolchain.ReleaseFetcher
+	LookPath       func(string) (string, error)
+	GOOS           string
+	GOARCH         string
 }
 
 // DefaultOptions constructs Options populated from the current OS environment.
@@ -43,12 +51,17 @@ func DefaultOptions() Options {
 		cacheDir = filepath.Join(cacheBase, "datafolio")
 	}
 	return Options{
-		Stdout:   os.Stdout,
-		Stderr:   os.Stderr,
-		WorkDir:  workDir,
-		HomeDir:  homeDir,
-		CacheDir: cacheDir,
-		Version:  version.Version,
+		Stdout:         os.Stdout,
+		Stderr:         os.Stderr,
+		WorkDir:        workDir,
+		HomeDir:        homeDir,
+		CacheDir:       cacheDir,
+		Version:        version.Version,
+		TypstRunner:    toolchain.RealTypstRunner{},
+		ReleaseFetcher: &toolchain.HTTPReleaseFetcher{},
+		LookPath:       exec.LookPath,
+		GOOS:           runtime.GOOS,
+		GOARCH:         runtime.GOARCH,
 	}
 }
 
@@ -62,8 +75,26 @@ func (o Options) normalized() Options {
 	if o.WorkDir == "" {
 		o.WorkDir, _ = os.Getwd()
 	}
+	if o.CacheDir == "" && o.HomeDir != "" {
+		o.CacheDir = filepath.Join(o.HomeDir, ".cache", "datafolio")
+	}
 	if o.Version == "" {
 		o.Version = version.Version
+	}
+	if o.TypstRunner == nil {
+		o.TypstRunner = toolchain.RealTypstRunner{}
+	}
+	if o.ReleaseFetcher == nil {
+		o.ReleaseFetcher = &toolchain.HTTPReleaseFetcher{}
+	}
+	if o.LookPath == nil {
+		o.LookPath = exec.LookPath
+	}
+	if o.GOOS == "" {
+		o.GOOS = runtime.GOOS
+	}
+	if o.GOARCH == "" {
+		o.GOARCH = runtime.GOARCH
 	}
 	return o
 }
