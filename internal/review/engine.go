@@ -80,6 +80,7 @@ func Review(ctx context.Context, opts Options) (Report, error) {
 
 	var report Report
 	audited := make(map[string]bool)
+	contractCache := make(map[string]*tokens.Contract)
 
 	var explicitTokensPath string
 	var explicitContract *tokens.Contract
@@ -94,6 +95,7 @@ func Review(ctx context.Context, opts Options) (Report, error) {
 		}
 		explicitTokensPath = absTok
 		explicitContract = contract
+		contractCache[absTok] = contract
 		s, err := resolveTokenSchool(absTok, schoolOverride)
 		if err != nil {
 			return Report{}, err
@@ -118,7 +120,7 @@ func Review(ctx context.Context, opts Options) (Report, error) {
 		}
 
 		if !info.IsDir() {
-			if err := auditTargetFile(ctx, targetAbs, true, opts, schoolOverride, explicitTokensPath, explicitContract, audited, &report); err != nil {
+			if err := auditTargetFile(ctx, targetAbs, true, opts, schoolOverride, explicitTokensPath, explicitContract, contractCache, audited, &report); err != nil {
 				return Report{}, err
 			}
 			continue
@@ -135,7 +137,7 @@ func Review(ctx context.Context, opts Options) (Report, error) {
 				}
 				return nil
 			}
-			return auditTargetFile(ctx, path, false, opts, schoolOverride, explicitTokensPath, explicitContract, audited, &report)
+			return auditTargetFile(ctx, path, false, opts, schoolOverride, explicitTokensPath, explicitContract, contractCache, audited, &report)
 		})
 		if walkErr != nil {
 			return Report{}, walkErr
@@ -173,6 +175,7 @@ func auditTargetFile(
 	schoolOverride school.School,
 	explicitTokensPath string,
 	explicitContract *tokens.Contract,
+	contractCache map[string]*tokens.Contract,
 	audited map[string]bool,
 	report *Report,
 ) error {
@@ -233,11 +236,11 @@ func auditTargetFile(
 	case kindWeb:
 		report.Files++
 		if defaultWebReviewer != nil {
-			s, err := resolveTokenSchool(cleanAbs, schoolOverride)
+			s, contract, err := resolveWebSchoolAndContract(cleanAbs, schoolOverride, explicitContract, contractCache)
 			if err != nil {
 				return err
 			}
-			findings, err := defaultWebReviewer(ctx, cleanAbs, disp, s, explicitContract)
+			findings, err := defaultWebReviewer(ctx, cleanAbs, disp, s, contract)
 			if err != nil {
 				return err
 			}
@@ -286,25 +289,63 @@ var nonTokenConfigFiles = map[string]bool{
 }
 
 func resolveTokenSchool(filePath string, schoolOverride school.School) (school.School, error) {
-	if schoolOverride != nil {
-		return schoolOverride, nil
+	s, _, err := resolveProjectSchoolAndTokensPath(filePath, schoolOverride)
+	return s, err
+}
+
+func resolveWebSchoolAndContract(
+	filePath string,
+	schoolOverride school.School,
+	explicitContract *tokens.Contract,
+	contractCache map[string]*tokens.Contract,
+) (school.School, *tokens.Contract, error) {
+	s, tokPath, err := resolveProjectSchoolAndTokensPath(filePath, schoolOverride)
+	if err != nil {
+		return nil, nil, err
 	}
+	if explicitContract != nil {
+		return s, explicitContract, nil
+	}
+	if tokPath == "" {
+		return s, nil, nil
+	}
+	if cached, ok := contractCache[tokPath]; ok {
+		return s, cached, nil
+	}
+	contract, err := tokens.ParseFile(tokPath)
+	if err != nil {
+		return nil, nil, usageErrorf("%v", err)
+	}
+	contractCache[tokPath] = contract
+	return s, contract, nil
+}
+
+func resolveProjectSchoolAndTokensPath(filePath string, schoolOverride school.School) (school.School, string, error) {
 	projectOv, _, err := config.DiscoverUpward(filepath.Dir(filePath))
 	if err != nil {
-		return nil, usageErrorf("%v", err)
+		return nil, "", usageErrorf("%v", err)
+	}
+
+	var tokPath string
+	if projectOv.Tokens != nil && strings.TrimSpace(*projectOv.Tokens) != "" {
+		tokPath = resolveWorkPath(projectOv.BaseDir, *projectOv.Tokens)
+	}
+
+	if schoolOverride != nil {
+		return schoolOverride, tokPath, nil
 	}
 	if projectOv.School != nil && strings.TrimSpace(*projectOv.School) != "" {
 		s, err := school.Lookup(*projectOv.School)
 		if err != nil {
-			return nil, usageErrorf("%v", err)
+			return nil, "", usageErrorf("%v", err)
 		}
-		return s, nil
+		return s, tokPath, nil
 	}
 	s, err := school.Lookup("tufte")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return s, nil
+	return s, tokPath, nil
 }
 
 func resolveExistingFile(workDir, p, flagName string) (string, error) {
