@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/pablodiegoo/datafolio/internal/school"
+	"github.com/pablodiegoo/datafolio/internal/tokens"
 	"gopkg.in/yaml.v3"
 )
 
@@ -240,6 +241,14 @@ func Resolve(overrides ...Override) (Config, school.School, school.SchoolTokens,
 		return Config{}, nil, school.SchoolTokens{}, err
 	}
 	cfg.Theme = tok.Theme
+
+	if cfg.Tokens != "" {
+		contract, err := tokens.ParseFile(cfg.Tokens)
+		if err != nil {
+			return Config{}, nil, school.SchoolTokens{}, err
+		}
+		tok = tokens.Merge(tok, contract)
+	}
 
 	return cfg, s, tok, nil
 }

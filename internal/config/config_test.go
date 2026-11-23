@@ -78,6 +78,12 @@ func TestDiscoverProjectConfigUpwardAndRelativePathResolution(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "design"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "design", "tokens.yaml"), []byte("color:\n  accent:\n    $value: \"#1E3A8A\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "datafolio.yaml"), []byte("tokens: design/tokens.yaml\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -97,5 +103,35 @@ func TestDiscoverProjectConfigUpwardAndRelativePathResolution(t *testing.T) {
 	wantTok := filepath.Join(root, "design", "tokens.yaml")
 	if cfg.Tokens != wantTok {
 		t.Fatalf("got tokens path %q, want %q", cfg.Tokens, wantTok)
+	}
+}
+
+func TestResolveAppliesExternalTokensOverlayAndErrorsOnMissing(t *testing.T) {
+	dir := t.TempDir()
+	tokPath := filepath.Join(dir, "tokens.yaml")
+	tokContent := `color:
+  paper: { $type: color, $value: "#ffffff" }
+  accent: { $type: color, $value: "#1E3A8A" }
+`
+	if err := os.WriteFile(tokPath, []byte(tokContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, tok, err := config.Resolve(config.Override{Tokens: &tokPath})
+	if err != nil {
+		t.Fatalf("Resolve with valid tokens failed: %v", err)
+	}
+	if tok.Paper != "#ffffff" || tok.Accent != "#1E3A8A" {
+		t.Fatalf("expected overlaid tokens, got paper=%q accent=%q", tok.Paper, tok.Accent)
+	}
+	// Source file must remain untouched.
+	raw, err := os.ReadFile(tokPath)
+	if err != nil || string(raw) != tokContent {
+		t.Fatalf("external Token Contract file was mutated")
+	}
+
+	missing := filepath.Join(dir, "does-not-exist.yaml")
+	if _, _, _, err := config.Resolve(config.Override{Tokens: &missing}); err == nil {
+		t.Fatalf("expected Resolve to error when tokens file is missing")
 	}
 }
