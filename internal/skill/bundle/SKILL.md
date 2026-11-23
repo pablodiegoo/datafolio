@@ -28,9 +28,12 @@ DataFolio separates semantic authoring from visual grammar through a pluggable `
   ```
 - **Compile a Source Document**:
   ```bash
-  datafolio build <source.md> [--to document|slides|html] [-o path] \
+  datafolio build <source.md> [--to document|slides|html] [-o path] [--output path] \
     [--school tufte] [--theme paper|night|print] [--lang en|pt-BR] [--paper a4|letter] \
-    [--tokens path] [--math mathml|katex] [--cover] [--toc] [--allow-overflow] [--watch]
+    [--tokens path] [--math mathml|katex] \
+    [--header spec] [--footer spec] [--header-rule] [--footer-rule] \
+    [--header-skip-first] [--footer-skip-first] \
+    [--cover] [--toc] [--allow-overflow] [--watch]
   ```
   Configuration resolves in four precedence levels (lowest to highest):
   1. Active `School` defaults
@@ -55,12 +58,16 @@ DataFolio separates semantic authoring from visual grammar through a pluggable `
   ```bash
   datafolio doctor [--install-typst] [--json]
   ```
+- **Print CLI version**:
+  ```bash
+  datafolio version
+  ```
 
 ## Authoring Source Documents
 
 Read [references/markdown-grammar.md](references/markdown-grammar.md) for full syntax details.
 
-1. Start every `Source Document` with YAML frontmatter (`title`, `subtitle`, `kicker`, `author`, `date`, `lang`, `school`, `theme`, `format`, `paper`, `cover`, `toc`, `header`, `footer`, `bibliography`, `csl`, `tokens`).
+1. Start every `Source Document` with YAML frontmatter (`title`, `subtitle`, `kicker`, `author`, `date`, `lang`, `school`, `theme`, `format`, `paper`, `cover`, `toc`, `header`, `footer`, `bibliography`, `csl`, `tokens`, `math`).
 2. Use Markdown footnote syntax (`[^1]` inline + `[^1]: **Optional title** body) for numbered `Sidenote`s. Keep references and definitions strictly 1-to-1.
 3. Use `:::note ... :::`, `> **Margin Note:** ...`, or `> **Nota de Margem:** ...` for unnumbered `Margin Note`s.
 4. Place full-width tables or charts inside `:::wide ... :::`, metric strips inside `:::kpi ... :::`, and side-by-side slide blocks inside `:::columns ... :::`.
@@ -71,11 +78,11 @@ Read [references/markdown-grammar.md](references/markdown-grammar.md) for full s
 
 ## Running Chrome (`header` and `footer`)
 
-Configure `Running Chrome` in `datafolio.yaml` or `Source Document` frontmatter:
+Configure `Running Chrome` in `datafolio.yaml`, `Source Document` frontmatter, or via CLI flags (`--header`, `--footer`, `--header-rule`, `--footer-rule`, `--header-skip-first`, `--footer-skip-first`):
 
 - Boolean shorthand: `header: false` or `footer: false` disables chrome; `true` enables defaults.
-- Object form supports `left`, `center`, `right`, `skip_first`, and `rule`.
-- Dynamic variables: `{title}`, `{subtitle}`, `{section}`, `{author}`, `{date}`, `{page}`, `{pages}`.
+- Object / CLI form supports `left`, `center`, `right`, `skip_first`, and `rule` (CLI also accepts `"left|center|right"` or JSON).
+- Dynamic variables: `{title}`, `{subtitle}`, `{kicker}`, `{section}`, `{author}`, `{date}`, `{page}`, `{pages}`.
 - Defaults: enabled with `skip_first: true` for `document`, disabled by default for `slides` (leaving the top clear for `Kicker`s), and rendered as static top/bottom bands with minimal `@page` rules in `html`.
 
 ## Token Contract & Analytical Plotting Workflow

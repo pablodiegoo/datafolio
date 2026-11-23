@@ -369,6 +369,8 @@ func TestTokensUsageAndErrorExitCodes(t *testing.T) {
 		{"tokens", "export", "--to", "less"},
 		{"tokens", "export", "--school", "unknown"},
 		{"tokens", "export", "--unknown-flag"},
+		{"tokens", "check", "--out", "dist"},
+		{"tokens", "check", "--to", "css"},
 	} {
 		code, _, _ := runCLI(t, dir, args...)
 		if code != cli.ExitUsage {

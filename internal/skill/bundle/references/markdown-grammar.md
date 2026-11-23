@@ -43,8 +43,8 @@ Precedence order: `School` defaults -> upward-discovered `datafolio.yaml` -> `So
 
 ## Running Chrome (`header` and `footer`)
 
-- Set `header: false` or `footer: false` to disable chrome entirely; set `true` to enable defaults.
-- Slot placeholders: `{title}`, `{subtitle}`, `{section}`, `{author}`, `{date}`, `{page}`, `{pages}`.
+- Set `header: false` or `footer: false` to disable chrome entirely; set `true` to enable defaults (or override per build with `--header`, `--footer`, `--header-rule`, `--footer-rule`, `--header-skip-first`, `--footer-skip-first`).
+- Slot placeholders: `{title}`, `{subtitle}`, `{kicker}`, `{section}`, `{author}`, `{date}`, `{page}`, `{pages}`.
 - `document` defaults to enabled with `skip_first: true`.
 - `slides` defaults to disabled so the top edge stays clear for slide `Kicker`s.
 - Override `Running Chrome` or `Kicker` on an individual slide using HTML comments inside that slide:
