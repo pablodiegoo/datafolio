@@ -9,6 +9,46 @@ type Metadata struct {
 	Date     string `yaml:"date"`
 }
 
+// SidenoteDef holds a parsed numbered Sidenote definition (`[^id]: ...`).
+type SidenoteDef struct {
+	ID         string
+	Number     int
+	Title      string
+	Blocks     []Block
+	Inlines    []Inline
+	Line       int
+	Referenced bool
+}
+
+// SidenoteRef records a single inline Sidenote reference (`[^id]`) and its resolution status.
+type SidenoteRef struct {
+	ID      string
+	Number  int
+	Line    int
+	Defined bool
+}
+
+// SlideChromeOverride captures per-slide Running Chrome overrides parsed from HTML comments.
+type SlideChromeOverride struct {
+	Set     bool
+	Enabled *bool
+	Left    string
+	Center  string
+	Right   string
+	Raw     string
+}
+
+// Slide represents a single logical slide split at top-level `---` thematic breaks.
+type Slide struct {
+	Index  int
+	Kicker string
+	Title  string
+	Header SlideChromeOverride
+	Footer SlideChromeOverride
+	Blocks []Block
+	Line   int
+}
+
 // SourceDocument is the School-agnostic Semantic Intermediate Representation of a Markdown file.
 type SourceDocument struct {
 	Path           string
@@ -17,6 +57,23 @@ type SourceDocument struct {
 	RawFrontmatter []byte
 	BodyLineOffset int
 	Blocks         []Block
+	Sidenotes      []SidenoteDef
+	SidenoteRefs   []SidenoteRef
+	Citations      []string
+	Slides         []Slide
+}
+
+// SidenoteByID looks up a parsed Sidenote definition by its raw footnote identifier.
+func (d *SourceDocument) SidenoteByID(id string) (SidenoteDef, bool) {
+	if d == nil {
+		return SidenoteDef{}, false
+	}
+	for _, sn := range d.Sidenotes {
+		if sn.ID == id {
+			return sn, true
+		}
+	}
+	return SidenoteDef{}, false
 }
 
 // Block represents a top-level semantic block inside a SourceDocument.
@@ -120,6 +177,54 @@ type FigureBlock struct {
 
 func (*FigureBlock) isBlock() {}
 
+// MarginNoteBlock represents an unnumbered contextual Margin Note (`:::note` or blockquote form).
+type MarginNoteBlock struct {
+	Title  string
+	Blocks []Block
+	Line   int
+}
+
+func (*MarginNoteBlock) isBlock() {}
+
+// WideBlock represents a full-width structural container (`:::wide`) spanning across the margin column.
+type WideBlock struct {
+	Blocks []Block
+	Line   int
+}
+
+func (*WideBlock) isBlock() {}
+
+// KPIItem holds a single key performance metric inside a KPIBlock.
+type KPIItem struct {
+	Label string
+	Value string
+	Note  string
+}
+
+// KPIBlock represents a booktabs KPI strip (`:::kpi`).
+type KPIBlock struct {
+	Items []KPIItem
+	Line  int
+}
+
+func (*KPIBlock) isBlock() {}
+
+// ColumnsBlock represents a multi-column side-by-side structural block (`:::columns`).
+type ColumnsBlock struct {
+	Columns [][]Block
+	Line    int
+}
+
+func (*ColumnsBlock) isBlock() {}
+
+// MathBlock represents a display-mode LaTeX math block (`$$...$$`).
+type MathBlock struct {
+	LaTeX string
+	Line  int
+}
+
+func (*MathBlock) isBlock() {}
+
 // TextInline holds plain text.
 type TextInline struct {
 	Text string
@@ -169,3 +274,36 @@ func (*SoftBreakInline) isInline() {}
 type HardBreakInline struct{}
 
 func (*HardBreakInline) isInline() {}
+
+// SidenoteRefInline represents an inline numbered Sidenote anchor (`[^id]`).
+type SidenoteRefInline struct {
+	ID      string
+	Number  int
+	Defined bool
+	Line    int
+}
+
+func (*SidenoteRefInline) isInline() {}
+
+// MathInline represents an inline LaTeX math span (`$...$`).
+type MathInline struct {
+	LaTeX   string
+	Display bool
+}
+
+func (*MathInline) isInline() {}
+
+// CitationItem represents one bibliographic key inside a CitationInline.
+type CitationItem struct {
+	Key     string
+	Prefix  string
+	Locator string
+}
+
+// CitationInline represents a bibliographic citation span (`[@key]` or `[@key1; @key2]`).
+type CitationInline struct {
+	Items []CitationItem
+	Raw   string
+}
+
+func (*CitationInline) isInline() {}
