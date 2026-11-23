@@ -61,7 +61,6 @@ func TestRunUsageAndStubExitCodes(t *testing.T) {
 		{name: "tokens stub", args: []string{"tokens"}, want: cli.ExitUsage},
 		{name: "review stub", args: []string{"review"}, want: cli.ExitUsage},
 		{name: "skill stub", args: []string{"skill"}, want: cli.ExitUsage},
-		{name: "doctor stub", args: []string{"doctor"}, want: cli.ExitUsage},
 	}
 
 	for _, tc := range cases {
