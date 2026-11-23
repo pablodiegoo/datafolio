@@ -185,3 +185,43 @@ Right col
 		t.Errorf("expected 2 blocks (heading + columns) on slide 2, got %d: %#v", len(s2.Blocks), s2.Blocks)
 	}
 }
+
+func TestParseSlideChromeOverrideJSONAndPipeAttributes(t *testing.T) {
+	md := `---
+title: Chrome Deck
+---
+
+<!-- header: {"left": "Course 101", "right": "{page} / {pages}", "rule": true, "skip_first": false} -->
+<!-- footer: left: Dept | right: Slide {page} | rule: true -->
+# Slide One
+
+Body.
+`
+	parsed, err := doc.Parse("chrome.md", []byte(md))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(parsed.Slides) != 1 {
+		t.Fatalf("got %d slides, want 1", len(parsed.Slides))
+	}
+	s := parsed.Slides[0]
+	if !s.Header.Set || s.Header.Enabled == nil || !*s.Header.Enabled {
+		t.Fatalf("expected header enabled=true, got %+v", s.Header)
+	}
+	if !s.Header.HasLeft || s.Header.Left != "Course 101" || s.Header.HasCenter || !s.Header.HasRight || s.Header.Right != "{page} / {pages}" {
+		t.Errorf("unexpected JSON header slots: %+v", s.Header)
+	}
+	if s.Header.Rule == nil || !*s.Header.Rule {
+		t.Errorf("expected header Rule=true, got %+v", s.Header.Rule)
+	}
+	if s.Header.SkipFirst == nil || *s.Header.SkipFirst {
+		t.Errorf("expected header SkipFirst=false, got %+v", s.Header.SkipFirst)
+	}
+
+	if !s.Footer.Set || !s.Footer.HasLeft || s.Footer.Left != "Dept" || s.Footer.HasCenter || !s.Footer.HasRight || s.Footer.Right != "Slide {page}" {
+		t.Errorf("unexpected pipe-attribute footer slots: %+v", s.Footer)
+	}
+	if s.Footer.Rule == nil || !*s.Footer.Rule {
+		t.Errorf("expected footer Rule=true, got %+v", s.Footer.Rule)
+	}
+}

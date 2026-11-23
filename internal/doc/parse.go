@@ -841,9 +841,13 @@ func buildSlides(blocks []Block, lineOffset int) ([]Block, []Slide) {
 			case "kicker":
 				cur.Kicker = node.Value
 			case "header":
-				cur.Header = parseSlideChromeOverride(node.Value)
+				if ov, err := ParseSlideChromeOverride(node.Value); err == nil {
+					cur.Header = ov
+				}
 			case "footer":
-				cur.Footer = parseSlideChromeOverride(node.Value)
+				if ov, err := ParseSlideChromeOverride(node.Value); err == nil {
+					cur.Footer = ov
+				}
 			}
 		case *ThematicBreakBlock:
 			cleanBlocks = append(cleanBlocks, node)
@@ -860,16 +864,59 @@ func buildSlides(blocks []Block, lineOffset int) ([]Block, []Slide) {
 	return cleanBlocks, slides
 }
 
-func parseSlideChromeOverride(raw string) SlideChromeOverride {
+// ParseSlideChromeOverride parses Running Chrome shorthand ("false", "true", "left | center | right",
+// "left: ... | rule: true", or JSON/YAML object "{...}") into a SlideChromeOverride.
+func ParseSlideChromeOverride(raw string) (SlideChromeOverride, error) {
 	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return SlideChromeOverride{}, fmt.Errorf("empty running chrome specification")
+	}
 	lower := strings.ToLower(trimmed)
 	switch lower {
 	case "false", "off", "none":
 		disabled := false
-		return SlideChromeOverride{Set: true, Enabled: &disabled, Raw: trimmed}
+		return SlideChromeOverride{Set: true, Enabled: &disabled, Raw: trimmed}, nil
 	case "true", "on":
 		enabled := true
-		return SlideChromeOverride{Set: true, Enabled: &enabled, Raw: trimmed}
+		return SlideChromeOverride{Set: true, Enabled: &enabled, Raw: trimmed}, nil
+	}
+
+	if strings.HasPrefix(trimmed, "{") {
+		var obj struct {
+			Enabled   *bool   `yaml:"enabled"`
+			Left      *string `yaml:"left"`
+			Center    *string `yaml:"center"`
+			Right     *string `yaml:"right"`
+			SkipFirst *bool   `yaml:"skip_first"`
+			Rule      *bool   `yaml:"rule"`
+		}
+		if err := yaml.Unmarshal([]byte(trimmed), &obj); err != nil {
+			return SlideChromeOverride{}, fmt.Errorf("invalid running chrome mapping: %w", err)
+		}
+		enabled := true
+		if obj.Enabled != nil {
+			enabled = *obj.Enabled
+		}
+		ov := SlideChromeOverride{
+			Set:       true,
+			Enabled:   &enabled,
+			SkipFirst: obj.SkipFirst,
+			Rule:      obj.Rule,
+			Raw:       trimmed,
+		}
+		if obj.Left != nil {
+			ov.Left = *obj.Left
+			ov.HasLeft = true
+		}
+		if obj.Center != nil {
+			ov.Center = *obj.Center
+			ov.HasCenter = true
+		}
+		if obj.Right != nil {
+			ov.Right = *obj.Right
+			ov.HasRight = true
+		}
+		return ov, nil
 	}
 
 	enabled := true
@@ -880,29 +927,40 @@ func parseSlideChromeOverride(raw string) SlideChromeOverride {
 	}
 	if strings.Contains(trimmed, "|") {
 		parts := strings.Split(trimmed, "|")
-		named := false
-		for _, part := range parts {
-			lp := strings.ToLower(strings.TrimSpace(part))
-			if strings.HasPrefix(lp, "left:") || strings.HasPrefix(lp, "center:") || strings.HasPrefix(lp, "right:") {
-				named = true
-				break
-			}
-		}
-		if named {
+		if hasNamedChromePipePart(parts) {
 			for _, part := range parts {
 				p := strings.TrimSpace(part)
 				lp := strings.ToLower(p)
 				switch {
 				case strings.HasPrefix(lp, "left:"):
 					ov.Left = strings.TrimSpace(p[len("left:"):])
+					ov.HasLeft = true
 				case strings.HasPrefix(lp, "center:"):
 					ov.Center = strings.TrimSpace(p[len("center:"):])
+					ov.HasCenter = true
 				case strings.HasPrefix(lp, "right:"):
 					ov.Right = strings.TrimSpace(p[len("right:"):])
+					ov.HasRight = true
+				case strings.HasPrefix(lp, "rule:"):
+					if b, ok := parseChromeBool(p[len("rule:"):]); ok {
+						ov.Rule = &b
+					}
+				case strings.HasPrefix(lp, "skip_first:"):
+					if b, ok := parseChromeBool(p[len("skip_first:"):]); ok {
+						ov.SkipFirst = &b
+					}
+				case strings.HasPrefix(lp, "enabled:"):
+					if b, ok := parseChromeBool(p[len("enabled:"):]); ok {
+						ov.Enabled = &b
+					}
 				}
 			}
-			return ov
+			return ov, nil
 		}
+		ov.ReplaceAllSlots = true
+		ov.HasLeft = true
+		ov.HasCenter = true
+		ov.HasRight = true
 		if len(parts) > 0 {
 			ov.Left = strings.TrimSpace(parts[0])
 		}
@@ -912,10 +970,35 @@ func parseSlideChromeOverride(raw string) SlideChromeOverride {
 		if len(parts) > 2 {
 			ov.Right = strings.TrimSpace(strings.Join(parts[2:], "|"))
 		}
-		return ov
+		return ov, nil
 	}
 	ov.Center = trimmed
-	return ov
+	ov.HasCenter = true
+	ov.ReplaceAllSlots = true
+	return ov, nil
+}
+
+func hasNamedChromePipePart(parts []string) bool {
+	for _, part := range parts {
+		lp := strings.ToLower(strings.TrimSpace(part))
+		for _, key := range []string{"left:", "center:", "right:", "rule:", "skip_first:", "enabled:"} {
+			if strings.HasPrefix(lp, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseChromeBool(raw string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "on", "yes", "1":
+		return true, true
+	case "false", "off", "no", "0":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func firstSlideTitle(blocks []Block) string {
