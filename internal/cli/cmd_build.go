@@ -13,9 +13,12 @@ import (
 	"github.com/pablodiegoo/datafolio/internal/config"
 	"github.com/pablodiegoo/datafolio/internal/doc"
 	htmlrender "github.com/pablodiegoo/datafolio/internal/render/html"
+	typstrender "github.com/pablodiegoo/datafolio/internal/render/typst"
+	"github.com/pablodiegoo/datafolio/internal/school"
+	"github.com/pablodiegoo/datafolio/internal/toolchain"
 )
 
-func runBuild(_ context.Context, args []string, opts Options) int {
+func runBuild(ctx context.Context, args []string, opts Options) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -142,10 +145,71 @@ func runBuild(_ context.Context, args []string, opts Options) int {
 		}
 		fmt.Fprintf(opts.Stdout, "wrote %s\n", outPath)
 		return ExitSuccess
+	case "document":
+		if err := buildTypstDocument(ctx, parsedDoc, cfg, tok, s.Labels(cfg.Lang), outPath, opts); err != nil {
+			fmt.Fprintf(opts.Stderr, "build: %v\n", err)
+			return ExitError
+		}
+		fmt.Fprintf(opts.Stdout, "wrote %s\n", outPath)
+		return ExitSuccess
 	default:
 		fmt.Fprintf(opts.Stderr, "build: format %q compilation requires Typst backend (not available in this build)\n", cfg.Format)
 		return ExitError
 	}
+}
+
+func buildTypstDocument(
+	ctx context.Context,
+	parsedDoc *doc.SourceDocument,
+	cfg config.Config,
+	tok school.SchoolTokens,
+	labels school.Labels,
+	outPath string,
+	opts Options,
+) error {
+	res := toolchain.ResolveTypst(opts.LookPath, opts.CacheDir, opts.GOOS, opts.GOARCH)
+	if !res.Found {
+		return fmt.Errorf("typst not found on PATH or in %s (run \"datafolio doctor --install-typst\" to install %s)",
+			toolchain.CachedTypstPath(opts.CacheDir, opts.GOOS), toolchain.PinnedTypstVersion)
+	}
+
+	fontPath, err := toolchain.EnsureFonts(opts.CacheDir)
+	if err != nil {
+		return err
+	}
+
+	tmpDir, err := os.MkdirTemp("", "datafolio-typst-*")
+	if err != nil {
+		return fmt.Errorf("create temp workspace: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	rootDir, renderOpts, err := typstrender.PrepareWorkspace(parsedDoc, cfg, tmpDir)
+	if err != nil {
+		return err
+	}
+
+	typSource, err := typstrender.RenderDocument(parsedDoc, cfg, tok, labels, renderOpts)
+	if err != nil {
+		return err
+	}
+
+	typPath := filepath.Join(tmpDir, "document.typ")
+	if err := os.WriteFile(typPath, []byte(typSource), 0o644); err != nil {
+		return fmt.Errorf("write typst source: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return err
+	}
+
+	return opts.TypstRunner.Compile(ctx, toolchain.CompileRequest{
+		TypstBin:   res.Path,
+		InputPath:  typPath,
+		OutputPath: outPath,
+		RootDir:    rootDir,
+		FontPath:   fontPath,
+	})
 }
 
 func printBuildUsage(w io.Writer) {
