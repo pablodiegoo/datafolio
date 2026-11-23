@@ -28,14 +28,20 @@ type SidenoteRef struct {
 	Defined bool
 }
 
-// SlideChromeOverride captures per-slide Running Chrome overrides parsed from HTML comments.
+// SlideChromeOverride captures per-slide Running Chrome overrides parsed from HTML comments or CLI flags.
 type SlideChromeOverride struct {
-	Set     bool
-	Enabled *bool
-	Left    string
-	Center  string
-	Right   string
-	Raw     string
+	Set             bool
+	Enabled         *bool
+	Left            string
+	Center          string
+	Right           string
+	HasLeft         bool
+	HasCenter       bool
+	HasRight        bool
+	ReplaceAllSlots bool
+	SkipFirst       *bool
+	Rule            *bool
+	Raw             string
 }
 
 // Slide represents a single logical slide split at top-level `---` thematic breaks.

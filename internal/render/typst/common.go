@@ -24,17 +24,19 @@ type RenderOptions struct {
 
 // RenderContext carries shared state while rendering SourceDocument blocks and inlines to Typst.
 type RenderContext struct {
-	Doc               *doc.SourceDocument
-	Cfg               config.Config
-	Tok               school.SchoolTokens
-	Labels            school.Labels
-	BibEntries        map[string]doc.BibEntry
-	Opts              RenderOptions
-	TopLevel          bool
-	InMargin          bool
-	RenderedSidenotes map[string]bool
-	SectionLevel      int
-	HasBibliography   bool
+	Doc                 *doc.SourceDocument
+	Cfg                 config.Config
+	Tok                 school.SchoolTokens
+	Labels              school.Labels
+	BibEntries          map[string]doc.BibEntry
+	Opts                RenderOptions
+	TopLevel            bool
+	InMargin            bool
+	RenderedSidenotes   map[string]bool
+	SectionLevel        int
+	MinBodyHeadingLevel int
+	FullWidthColumns    bool
+	HasBibliography     bool
 }
 
 // PrepareWorkspace validates local figure, bibliography, and CSL files, computes the
@@ -589,6 +591,241 @@ func EmitSchoolPreamble(b *strings.Builder, tok school.SchoolTokens, labels scho
 	fmt.Fprintf(b, "#let df-label-contents = %s\n", TypstString(fallbackStr(labels.Contents, "Contents")))
 }
 
+// NormalizedColumnRatios resolves normalized main, gap, and margin column ratios from SchoolTokens.
+func NormalizedColumnRatios(tok school.SchoolTokens) (mainR, gapR, marginR float64) {
+	mainR = ParsePercentRatio(tok.MainWidth, 0.65)
+	gapR = ParsePercentRatio(tok.ColumnGap, 0.05)
+	marginR = ParsePercentRatio(tok.MarginWidth, 0.30)
+	total := mainR + gapR + marginR
+	if total <= 0 {
+		return 0.65, 0.05, 0.30
+	}
+	return mainR / total, gapR / total, marginR / total
+}
+
+// ResolveBibliographyAssets parses bibliography entries and resolves/maps bibliography and CSL paths for Typst.
+func ResolveBibliographyAssets(d *doc.SourceDocument, cfg config.Config, opts RenderOptions) (bibEntries map[string]doc.BibEntry, mappedBibPath string, hasBib bool, cslArg string, err error) {
+	if bibPath := ResolveBibPath(cfg.Bibliography, d.Dir); bibPath != "" {
+		entries, parseErr := doc.ParseBibFile(bibPath)
+		if parseErr != nil {
+			return nil, "", false, "", fmt.Errorf("bibliography %q: %w", cfg.Bibliography, parseErr)
+		}
+		bibEntries = entries
+		hasBib = true
+		if opts.AssetMapper != nil {
+			mappedBibPath, err = opts.AssetMapper(bibPath)
+			if err != nil {
+				return nil, "", false, "", fmt.Errorf("bibliography %q: %w", cfg.Bibliography, err)
+			}
+		} else {
+			mappedBibPath = bibPath
+		}
+	}
+
+	var cslIsFile bool
+	cslArg, cslIsFile, err = ResolveCSL(cfg.CSL, d.Dir)
+	if err != nil {
+		return nil, "", false, "", err
+	}
+	if cslIsFile && opts.AssetMapper != nil {
+		cslArg, err = opts.AssetMapper(cslArg)
+		if err != nil {
+			return nil, "", false, "", fmt.Errorf("csl %q: %w", cfg.CSL, err)
+		}
+	}
+	return bibEntries, mappedBibPath, hasBib, cslArg, nil
+}
+
+// HasCitedEntries reports whether at least one cited key exists in bibEntries.
+func HasCitedEntries(citations []string, bibEntries map[string]doc.BibEntry) bool {
+	for _, key := range citations {
+		if _, ok := bibEntries[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// EmitLanguageSetText writes the Typst base `#set text(...)` rule with language/region and tabular numerals.
+func EmitLanguageSetText(b *strings.Builder, lang, sizeExpr string) {
+	typLang, typRegion := TypstLangRegion(lang)
+	if typRegion != "" {
+		fmt.Fprintf(b, "#set text(font: df-font-serif, fill: df-ink, size: %s, lang: %s, region: %s, number-width: \"tabular\")\n",
+			sizeExpr, TypstString(typLang), TypstString(typRegion))
+		return
+	}
+	fmt.Fprintf(b, "#set text(font: df-font-serif, fill: df-ink, size: %s, lang: %s, number-width: \"tabular\")\n",
+		sizeExpr, TypstString(typLang))
+}
+
+// EmitTypstHelpers writes shared Typst helper functions for section lookup, margin placement, sidenotes, and semantic containers.
+func EmitTypstHelpers(b *strings.Builder) {
+	b.WriteString(`#let df-section() = {
+  let pg = here().page()
+  let hs = query(heading.where(level: df-sec-level, outlined: true))
+  if hs.len() == 0 {
+    hs = query(heading.where(outlined: true))
+  }
+  let current = ""
+  for h in hs {
+    let hpg = h.location().page()
+    if hpg < pg {
+      current = h.body
+    } else if hpg == pg {
+      current = h.body
+      break
+    }
+  }
+  current
+}
+
+#let df-place-margin(body, align-offset: 0pt, page-origin: false) = context {
+  let pos = here().position()
+  let pg = pos.page
+  let anchor-y = pos.y
+  let prevs = query(selector(<df-margin-mark>).before(here()))
+  let min-y = df-top-margin.to-absolute()
+  for m in prevs {
+    if m.value.page == pg and m.value.bottom > min-y {
+      min-y = m.value.bottom
+    }
+  }
+  let note-box = block(width: df-margin-w, breakable: false)[
+    #set text(font: df-font-sans, size: 8.2pt, fill: df-ink-soft)
+    #set par(leading: 0.52em, justify: false)
+    #body
+  ]
+  let sz = measure(note-box)
+  let max-y = page.height - df-bottom-margin.to-absolute() - sz.height
+  let desired-y = anchor-y - align-offset.to-absolute()
+  let target-y = calc.max(calc.min(desired-y, max-y), min-y)
+  let bottom-y = target-y + sz.height + 5pt
+  let dx = if page-origin { df-main-w + df-gap-w } else { (df-outer-x + df-main-w + df-gap-w).to-absolute() - pos.x }
+  let dy = if page-origin { target-y - df-top-margin.to-absolute() } else { target-y - anchor-y }
+  [#metadata((page: pg, bottom: bottom-y)) <df-margin-mark>]
+  place(top + left, dx: dx, dy: dy, note-box)
+}
+
+#let df-sidenote(num, body) = {
+  super[#text(fill: df-accent, weight: "semibold")[#num]]
+  box(width: 0pt, height: 0pt)[
+    #df-place-margin(align-offset: 0.7em)[
+      #text(fill: df-accent, weight: "semibold")[#num. ]#body
+    ]
+  ]
+}
+
+#let df-margin-note(body) = {
+  df-place-margin(align-offset: 0pt, page-origin: true, body)
+}
+
+#let df-inline-note(body) = block(
+  width: 100%,
+  inset: (left: 10pt, y: 6pt, right: 8pt),
+  fill: df-paper-subtle,
+  stroke: (left: 2pt + df-rule-strong),
+)[
+  #set text(font: df-font-sans, size: 8.8pt, fill: df-ink-soft)
+  #body
+]
+
+#let df-wide(body) = {
+  block(width: df-printable-w, breakable: true)[#body]
+  context [#metadata((page: here().page(), bottom: here().position().y + 5pt)) <df-margin-mark>]
+}
+
+#let df-kpi(body) = block(
+  width: 100%,
+  inset: (y: 6pt),
+  stroke: (top: df-booktabs-top + df-rule-strong, bottom: df-booktabs-top + df-rule-strong),
+)[#body]
+
+#let df-blockquote(body) = block(
+  width: 100%,
+  inset: (left: 10pt, y: 2pt),
+  stroke: (left: 2pt + df-accent),
+)[
+  #set text(fill: df-ink-soft, style: "italic")
+  #body
+]
+
+#let df-code-block(body) = block(
+  width: 100%,
+  inset: 8pt,
+  fill: df-paper-subtle,
+  stroke: 0.5pt + df-rule,
+)[
+  #set text(font: df-font-mono, size: 8.5pt, fill: df-ink)
+  #body
+]
+
+`)
+}
+
+// EmitSharedShowRules writes Typst show rules common to both `document` and `slides` Formats.
+func EmitSharedShowRules(b *strings.Builder, secLevel int, figGap string) {
+	b.WriteString("#show raw.where(block: false): it => box(fill: df-paper-subtle, inset: (x: 2.5pt, y: 0pt), outset: (y: 1.5pt), stroke: 0.4pt + df-rule)[#text(font: df-font-mono, size: 8.8pt)[#it]]\n")
+	b.WriteString("#show link: set text(fill: df-accent)\n")
+	fmt.Fprintf(b, "#show figure: set block(above: %s, below: %s)\n", figGap, figGap)
+	b.WriteString("#show figure.where(kind: table): set block(breakable: true)\n")
+	b.WriteString("#show figure.where(kind: table): set figure.caption(position: top)\n")
+	b.WriteString("#show figure.caption: set text(font: df-font-sans, size: 8.5pt, fill: df-ink-soft)\n")
+	fmt.Fprintf(b, "#show bibliography: set heading(level: %d)\n\n", secLevel)
+}
+
+// EmitCoverBlock writes the editorial cover typography block (kicker, title, subtitle, heavy rule, author/date).
+func EmitCoverBlock(b *strings.Builder, meta doc.Metadata, fallbackTitle, topSpace string, useWide bool) {
+	title := strings.TrimSpace(meta.Title)
+	if title == "" {
+		title = fallbackTitle
+	}
+	if useWide {
+		b.WriteString("#df-wide[\n")
+	} else {
+		b.WriteString("#block(width: df-printable-w)[\n")
+	}
+	fmt.Fprintf(b, "  #v(%s)\n", topSpace)
+	if meta.Kicker != "" {
+		fmt.Fprintf(b, "  #text(font: df-font-sans, size: 9pt, weight: \"semibold\", fill: df-accent, tracking: 0.12em)[#upper(%s)]\n  #v(0.6em)\n",
+			TypstString(meta.Kicker))
+	}
+	fmt.Fprintf(b, "  #text(size: 28pt, weight: \"medium\", fill: df-ink)[%s]\n", EscapeMarkup(title))
+	if meta.Subtitle != "" {
+		fmt.Fprintf(b, "  #v(0.6em)\n  #text(size: 14pt, style: \"italic\", fill: df-ink-soft)[%s]\n", EscapeMarkup(meta.Subtitle))
+	}
+	b.WriteString("  #v(1.4em)\n  #line(length: 100%, stroke: 1.5pt + df-rule-strong)\n  #v(0.9em)\n")
+	if meta.Author != "" || meta.Date != "" {
+		b.WriteString("  #text(font: df-font-sans, size: 10pt, fill: df-muted)[")
+		if meta.Author != "" {
+			b.WriteString(EscapeMarkup(meta.Author))
+		}
+		if meta.Author != "" && meta.Date != "" {
+			b.WriteString("  ·  ")
+		}
+		if meta.Date != "" {
+			b.WriteString(EscapeMarkup(meta.Date))
+		}
+		b.WriteString("]\n")
+	}
+	b.WriteString("]\n")
+}
+
+// EmitBibliography writes a Typst `#bibliography(...)` block with optional CSL style.
+func EmitBibliography(b *strings.Builder, mappedBibPath, cslArg string, includeTitle bool) {
+	titleOpt := ""
+	if includeTitle {
+		titleOpt = ", title: [#df-label-references]"
+	} else {
+		titleOpt = ", title: none"
+	}
+	if cslArg != "" {
+		fmt.Fprintf(b, "#bibliography(%s%s, style: %s)\n",
+			TypstString(mappedBibPath), titleOpt, TypstString(cslArg))
+		return
+	}
+	fmt.Fprintf(b, "#bibliography(%s%s)\n", TypstString(mappedBibPath), titleOpt)
+}
+
 func fallbackStr(val, fb string) string {
 	if strings.TrimSpace(val) == "" {
 		return fb
@@ -774,6 +1011,9 @@ func RenderBlock(b *strings.Builder, blk doc.Block, ctx *RenderContext) error {
 	switch node := blk.(type) {
 	case *doc.HeadingBlock:
 		lvl := node.Level
+		if ctx != nil && ctx.MinBodyHeadingLevel > 0 && lvl < ctx.MinBodyHeadingLevel {
+			lvl = ctx.MinBodyHeadingLevel
+		}
 		if lvl < 1 {
 			lvl = 1
 		}
@@ -1114,8 +1354,12 @@ func renderColumns(b *strings.Builder, node *doc.ColumnsBlock, ctx *RenderContex
 	for i := range cols {
 		cols[i] = "1fr"
 	}
+	wrapWide := ctx != nil && ctx.FullWidthColumns && ctx.TopLevel
 	nested := *ctx
 	nested.TopLevel = false
+	if wrapWide {
+		b.WriteString("#df-wide[\n")
+	}
 	fmt.Fprintf(b, "#grid(columns: (%s), column-gutter: 16pt,\n", strings.Join(cols, ", "))
 	for _, col := range node.Columns {
 		b.WriteString("  [\n")
@@ -1125,6 +1369,9 @@ func renderColumns(b *strings.Builder, node *doc.ColumnsBlock, ctx *RenderContex
 		b.WriteString("  ],\n")
 	}
 	b.WriteString(")\n")
+	if wrapWide {
+		b.WriteString("]\n")
+	}
 	return nil
 }
 

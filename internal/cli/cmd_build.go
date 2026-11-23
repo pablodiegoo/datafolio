@@ -23,16 +23,23 @@ func runBuild(ctx context.Context, args []string, opts Options) int {
 	fs.SetOutput(io.Discard)
 
 	var (
-		formatFlag string
-		outputFlag string
-		schoolFlag string
-		themeFlag  string
-		langFlag   string
-		paperFlag  string
-		tokensFlag string
-		mathFlag   string
-		coverFlag  bool
-		tocFlag    bool
+		formatFlag          string
+		outputFlag          string
+		schoolFlag          string
+		themeFlag           string
+		langFlag            string
+		paperFlag           string
+		tokensFlag          string
+		mathFlag            string
+		headerFlag          string
+		footerFlag          string
+		coverFlag           bool
+		tocFlag             bool
+		headerRuleFlag      bool
+		footerRuleFlag      bool
+		headerSkipFirstFlag bool
+		footerSkipFirstFlag bool
+		allowOverflowFlag   bool
 	)
 	fs.StringVar(&formatFlag, "to", "", "target Format: document, slides, or html")
 	fs.StringVar(&outputFlag, "o", "", "output file path")
@@ -43,8 +50,15 @@ func runBuild(ctx context.Context, args []string, opts Options) int {
 	fs.StringVar(&paperFlag, "paper", "", "paper size (a4 or letter)")
 	fs.StringVar(&tokensFlag, "tokens", "", "path to W3C DTCG Token Contract or DESIGN.md")
 	fs.StringVar(&mathFlag, "math", "", "HTML math mode (mathml or katex)")
+	fs.StringVar(&headerFlag, "header", "", "Running Chrome header (false, true, left|center|right, or JSON)")
+	fs.StringVar(&footerFlag, "footer", "", "Running Chrome footer (false, true, left|center|right, or JSON)")
 	fs.BoolVar(&coverFlag, "cover", false, "include cover page")
 	fs.BoolVar(&tocFlag, "toc", false, "include table of contents")
+	fs.BoolVar(&headerRuleFlag, "header-rule", false, "render separator rule under Running Chrome header")
+	fs.BoolVar(&footerRuleFlag, "footer-rule", false, "render separator rule above Running Chrome footer")
+	fs.BoolVar(&headerSkipFirstFlag, "header-skip-first", false, "hide Running Chrome header on page/slide 1")
+	fs.BoolVar(&footerSkipFirstFlag, "footer-skip-first", false, "hide Running Chrome footer on page/slide 1")
+	fs.BoolVar(&allowOverflowFlag, "allow-overflow", false, "downgrade Slide Overflow errors in slides Format to warnings")
 
 	pos, err := parsePositionalFlags(fs, args)
 	if err != nil {
@@ -60,8 +74,10 @@ func runBuild(ctx context.Context, args []string, opts Options) int {
 		return ExitUsage
 	}
 
+	visited := make(map[string]bool)
 	cliOverride := config.Override{BaseDir: opts.WorkDir}
 	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
 		switch f.Name {
 		case "to":
 			cliOverride.Format = &formatFlag
@@ -83,6 +99,18 @@ func runBuild(ctx context.Context, args []string, opts Options) int {
 			cliOverride.TOC = &tocFlag
 		}
 	})
+	if hdrOv, err := parseCLIChromeFlag(visited["header"], headerFlag, visited["header-rule"], headerRuleFlag, visited["header-skip-first"], headerSkipFirstFlag); err != nil {
+		fmt.Fprintf(opts.Stderr, "build: --header: %v\n", err)
+		return ExitUsage
+	} else if hdrOv != nil {
+		cliOverride.Header = hdrOv
+	}
+	if ftrOv, err := parseCLIChromeFlag(visited["footer"], footerFlag, visited["footer-rule"], footerRuleFlag, visited["footer-skip-first"], footerSkipFirstFlag); err != nil {
+		fmt.Fprintf(opts.Stderr, "build: --footer: %v\n", err)
+		return ExitUsage
+	} else if ftrOv != nil {
+		cliOverride.Footer = ftrOv
+	}
 	if err := config.ValidateOverride(cliOverride); err != nil {
 		fmt.Fprintf(opts.Stderr, "build: %v\n", err)
 		return ExitUsage
@@ -145,8 +173,8 @@ func runBuild(ctx context.Context, args []string, opts Options) int {
 		}
 		fmt.Fprintf(opts.Stdout, "wrote %s\n", outPath)
 		return ExitSuccess
-	case "document":
-		if err := buildTypstDocument(ctx, parsedDoc, cfg, tok, s.Labels(cfg.Lang), outPath, opts); err != nil {
+	case "document", "slides":
+		if err := buildTypst(ctx, parsedDoc, cfg, tok, s.Labels(cfg.Lang), outPath, allowOverflowFlag, opts); err != nil {
 			fmt.Fprintf(opts.Stderr, "build: %v\n", err)
 			return ExitError
 		}
@@ -158,13 +186,14 @@ func runBuild(ctx context.Context, args []string, opts Options) int {
 	}
 }
 
-func buildTypstDocument(
+func buildTypst(
 	ctx context.Context,
 	parsedDoc *doc.SourceDocument,
 	cfg config.Config,
 	tok school.SchoolTokens,
 	labels school.Labels,
 	outPath string,
+	allowOverflow bool,
 	opts Options,
 ) error {
 	res := toolchain.ResolveTypst(opts.LookPath, opts.CacheDir, opts.GOOS, opts.GOARCH)
@@ -189,12 +218,19 @@ func buildTypstDocument(
 		return err
 	}
 
-	typSource, err := typstrender.RenderDocument(parsedDoc, cfg, tok, labels, renderOpts)
+	var typSource string
+	fileName := "document.typ"
+	if cfg.Format == "slides" {
+		fileName = "slides.typ"
+		typSource, err = typstrender.RenderSlides(parsedDoc, cfg, tok, labels, renderOpts)
+	} else {
+		typSource, err = typstrender.RenderDocument(parsedDoc, cfg, tok, labels, renderOpts)
+	}
 	if err != nil {
 		return err
 	}
 
-	typPath := filepath.Join(tmpDir, "document.typ")
+	typPath := filepath.Join(tmpDir, fileName)
 	if err := os.WriteFile(typPath, []byte(typSource), 0o644); err != nil {
 		return fmt.Errorf("write typst source: %w", err)
 	}
@@ -203,27 +239,99 @@ func buildTypstDocument(
 		return err
 	}
 
-	return opts.TypstRunner.Compile(ctx, toolchain.CompileRequest{
+	if err := opts.TypstRunner.Compile(ctx, toolchain.CompileRequest{
 		TypstBin:   res.Path,
 		InputPath:  typPath,
 		OutputPath: outPath,
 		RootDir:    rootDir,
 		FontPath:   fontPath,
+	}); err != nil {
+		return err
+	}
+
+	if cfg.Format != "slides" {
+		return nil
+	}
+
+	overflows, err := typstrender.CheckSlideOverflow(ctx, opts.TypstRunner, toolchain.QueryRequest{
+		TypstBin:  res.Path,
+		InputPath: typPath,
+		Selector:  typstrender.SlideMarkerSelector,
+		RootDir:   rootDir,
+		FontPath:  fontPath,
 	})
+	if err != nil {
+		_ = os.Remove(outPath)
+		return err
+	}
+	if len(overflows) > 0 {
+		msg := typstrender.FormatSlideOverflows(overflows)
+		if allowOverflow {
+			fmt.Fprintf(opts.Stderr, "warning: %s\n", msg)
+			return nil
+		}
+		_ = os.Remove(outPath)
+		return fmt.Errorf("%s (pass --allow-overflow to keep the PDF)", msg)
+	}
+	return nil
+}
+
+func parseCLIChromeFlag(hasMain bool, raw string, hasRule, rule, hasSkip, skip bool) (*config.ChromeOverride, error) {
+	if !hasMain && !hasRule && !hasSkip {
+		return nil, nil
+	}
+	out := &config.ChromeOverride{}
+	if hasMain {
+		ov, err := doc.ParseSlideChromeOverride(raw)
+		if err != nil {
+			return nil, err
+		}
+		out.Enabled = ov.Enabled
+		out.SkipFirst = ov.SkipFirst
+		out.Rule = ov.Rule
+		if ov.ReplaceAllSlots || ov.HasLeft {
+			l := ov.Left
+			out.Left = &l
+		}
+		if ov.ReplaceAllSlots || ov.HasCenter {
+			c := ov.Center
+			out.Center = &c
+		}
+		if ov.ReplaceAllSlots || ov.HasRight {
+			r := ov.Right
+			out.Right = &r
+		}
+	}
+	if hasRule {
+		r := rule
+		out.Rule = &r
+	}
+	if hasSkip {
+		s := skip
+		out.SkipFirst = &s
+	}
+	return out, nil
 }
 
 func printBuildUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage: datafolio build <input.md> [flags]
 
 Flags:
-  --to string       Target Format: document, slides, or html
-  -o, --output      Output file path
-  --school string   Visual School
-  --theme string    Theme mode: paper, night, or print
-  --lang string     Document language: en or pt-BR
-  --paper string    Paper size: a4 or letter
-  --tokens string   Path to Token Contract file or DESIGN.md
-  --math string     HTML math compiler: mathml or katex
-  --cover           Include cover page
-  --toc             Include table of contents`)
+  --to string           Target Format: document, slides, or html
+  -o, --output          Output file path
+  --school string       Visual School
+  --theme string        Theme mode: paper, night, or print
+  --lang string         Document language: en or pt-BR
+  --paper string        Paper size: a4 or letter
+  --tokens string       Path to Token Contract file or DESIGN.md
+  --math string         HTML math compiler: mathml or katex
+  --header string       Running Chrome header (false, true, "left|center|right", or JSON)
+  --footer string       Running Chrome footer (false, true, "left|center|right", or JSON)
+  --header-rule         Render separator rule under Running Chrome header
+  --footer-rule         Render separator rule above Running Chrome footer
+  --header-skip-first   Hide Running Chrome header on page/slide 1
+  --footer-skip-first   Hide Running Chrome footer on page/slide 1
+  --cover               Include cover page
+  --toc                 Include table of contents
+  --allow-overflow      Keep slides PDF and warn on Slide Overflow instead of failing`)
 }
