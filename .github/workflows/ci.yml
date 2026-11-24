@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/*"
+  pull_request:
+
+jobs:
+  test:
+    name: Test, Static Build & Real Typst Integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet Go packages
+        run: go vet ./...
+
+      - name: Run unit and race suite
+        run: go test -race -count=1 ./...
+
+      - name: Verify Skill Bundle matches CLI
+        run: go test -v ./internal/cli -run TestSkillBundleMatchesCLI
+
+      - name: Build static CGO_ENABLED=0 binary
+        run: CGO_ENABLED=0 go build -trimpath -o ./bin/datafolio ./cmd/datafolio
+
+      - name: Install verified Typst v0.15.1 and check doctor health
+        run: |
+          ./bin/datafolio doctor --install-typst
+          ./bin/datafolio doctor
+          TYPST_DIR="$(dirname "$(./bin/datafolio doctor --json | jq -r '.typst.path')")"
+          echo "$TYPST_DIR" >> "$GITHUB_PATH"
+
+      - name: Run real-Typst PDF and slides integration suite
+        run: DATAFOLIO_TEST_REAL_TYPST=1 go test -v ./...
+
+  release-check:
+    name: GoReleaser & Cross-Platform Static Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+
+      - name: Validate GoReleaser configuration
+        run: goreleaser check
+
+      - name: Cross-compile all 6 CGO_ENABLED=0 targets
+        run: |
+          mkdir -p ./bin/cross
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              ext=""
+              if [ "$os" = "windows" ]; then ext=".exe"; fi
+              GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -o "./bin/cross/datafolio-${os}-${arch}${ext}" ./cmd/datafolio
+            done
+          done

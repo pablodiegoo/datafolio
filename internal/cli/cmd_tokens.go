@@ -25,9 +25,9 @@ func runTokens(ctx context.Context, args []string, opts Options) int {
 		printTokensUsage(opts.Stdout)
 		return ExitSuccess
 	case "export":
-		return runTokensExport(ctx, args[1:], opts, false)
+		return runTokensExport(ctx, args[1:], opts)
 	case "check":
-		return runTokensExport(ctx, args[1:], opts, true)
+		return runTokensCheck(ctx, args[1:], opts)
 	default:
 		fmt.Fprintf(opts.Stderr, "tokens: unknown subcommand %q\n\n", args[0])
 		printTokensUsage(opts.Stderr)
@@ -35,29 +35,44 @@ func runTokens(ctx context.Context, args []string, opts Options) int {
 	}
 }
 
-func runTokensExport(_ context.Context, args []string, opts Options, checkOnly bool) int {
-	cmdName := "tokens export"
-	if checkOnly {
-		cmdName = "tokens check"
-	}
+type tokensFlagValues struct {
+	from   string
+	to     string
+	out    string
+	school string
+	theme  string
+	check  bool
+}
 
-	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
+func runTokensExport(_ context.Context, args []string, opts Options) int {
+	fs := flag.NewFlagSet("tokens export", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	var (
-		fromFlag   string
-		toFlag     string
-		outFlag    string
-		schoolFlag string
-		themeFlag  string
-		checkFlag  bool
-	)
-	fs.StringVar(&fromFlag, "from", "", "path to W3C DTCG YAML/JSON file or DESIGN.md")
-	fs.StringVar(&toFlag, "to", strings.Join(tokens.AllTargets, ","), "export targets (css,tailwind,scss,typst,matplotlib)")
-	fs.StringVar(&outFlag, "out", "", "output directory (defaults to working directory)")
-	fs.StringVar(&schoolFlag, "school", "", "visual School")
-	fs.StringVar(&themeFlag, "theme", "", "Theme mode (paper, night, print)")
-	fs.BoolVar(&checkFlag, "check", false, "validate WCAG AA contrast without writing files unless --to or --out is set")
+	var vals tokensFlagValues
+	fs.StringVar(&vals.from, "from", "", "path to W3C DTCG YAML/JSON file or DESIGN.md")
+	fs.StringVar(&vals.to, "to", strings.Join(tokens.AllTargets, ","), "export targets (css,tailwind,scss,typst,matplotlib)")
+	fs.StringVar(&vals.out, "out", "", "output directory (defaults to working directory)")
+	fs.StringVar(&vals.school, "school", "", "visual School")
+	fs.StringVar(&vals.theme, "theme", "", "Theme mode (paper, night, print)")
+	fs.BoolVar(&vals.check, "check", false, "validate WCAG AA contrast without writing files unless --to or --out is set")
+
+	return executeTokensCommand(fs, args, opts, false, &vals)
+}
+
+func runTokensCheck(_ context.Context, args []string, opts Options) int {
+	fs := flag.NewFlagSet("tokens check", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var vals tokensFlagValues
+	fs.StringVar(&vals.from, "from", "", "path to W3C DTCG YAML/JSON file or DESIGN.md")
+	fs.StringVar(&vals.school, "school", "", "visual School")
+	fs.StringVar(&vals.theme, "theme", "", "Theme mode (paper, night, print)")
+
+	return executeTokensCommand(fs, args, opts, true, &vals)
+}
+
+func executeTokensCommand(fs *flag.FlagSet, args []string, opts Options, checkOnly bool, vals *tokensFlagValues) int {
+	cmdName := fs.Name()
 
 	pos, err := parsePositionalFlags(fs, args)
 	if err != nil {
@@ -80,11 +95,16 @@ func runTokensExport(_ context.Context, args []string, opts Options, checkOnly b
 		case "out":
 			outSet = true
 		case "school":
-			cliOv.School = &schoolFlag
+			cliOv.School = &vals.school
 		case "theme":
-			cliOv.Theme = &themeFlag
+			cliOv.Theme = &vals.theme
 		}
 	})
+
+	fromFlag := vals.from
+	toFlag := vals.to
+	outFlag := vals.out
+	checkFlag := vals.check
 
 	if len(pos) == 1 && !fromSet {
 		fromFlag = pos[0]
