@@ -13,6 +13,7 @@ type School interface {
 	Tokens(theme string) (SchoolTokens, error)
 	Labels(lang string) Labels
 	Policy() ReviewPolicy
+	SkillReference() (relPath string, content []byte)
 }
 
 // SchoolTokens holds the resolved surface, ink, typography, and layout tokens for a Theme.

@@ -20,10 +20,6 @@ const (
 	RuleWebOffContractShadow = "web-off-contract-shadow"
 )
 
-func init() {
-	defaultWebReviewer = reviewWebFile
-}
-
 type webPolicy struct {
 	schoolName     string
 	policy         school.ReviewPolicy
@@ -99,32 +95,7 @@ func buildWebPolicy(s school.School, contract *tokens.Contract) webPolicy {
 		}
 	}
 
-	for _, theme := range []string{"paper", "night", "print", ""} {
-		st, err := s.Tokens(theme)
-		if err != nil {
-			continue
-		}
-		if contract != nil {
-			st = tokens.Merge(st, contract)
-		}
-		for _, col := range []string{
-			st.Paper, st.PaperSubtle, st.PaperAlt,
-			st.Ink, st.InkSoft, st.Muted,
-			st.Accent, st.Ochre, st.Forest,
-			st.Rule, st.RuleStrong,
-		} {
-			addColor(col)
-		}
-		addRadius(st.BorderRadius)
-		if normSh := normalizeShadowValue(st.BoxShadow); normSh != "" {
-			allowedShadows[normSh] = true
-		}
-	}
-
-	if pol.MaxBorderRadius != "" {
-		addRadius(pol.MaxBorderRadius)
-	}
-
+	var hasColors, hasRadii, hasShadows bool
 	if contract != nil {
 		for _, tok := range contract.Tokens {
 			lowerPath := strings.ToLower(tok.Path)
@@ -133,16 +104,49 @@ func buildWebPolicy(s school.School, contract *tokens.Contract) webPolicy {
 				continue
 			}
 			if tok.Type == "color" || looksLikeWebColor(val) {
+				hasColors = true
 				addColor(val)
 			}
 			if strings.Contains(lowerPath, "radius") {
+				hasRadii = true
 				addRadius(val)
 			}
 			if tok.Type == "shadow" || strings.Contains(lowerPath, "shadow") || strings.Contains(lowerPath, "elevation") {
 				if norm := normalizeShadowValue(val); norm != "" {
+					hasShadows = true
 					allowedShadows[norm] = true
 				}
 			}
+		}
+	}
+
+	if !hasColors || !hasRadii || !hasShadows {
+		for _, theme := range []string{"paper", "night", "print", ""} {
+			st, err := s.Tokens(theme)
+			if err != nil {
+				continue
+			}
+			if !hasColors {
+				for _, col := range []string{
+					st.Paper, st.PaperSubtle, st.PaperAlt,
+					st.Ink, st.InkSoft, st.Muted,
+					st.Accent, st.Ochre, st.Forest,
+					st.Rule, st.RuleStrong,
+				} {
+					addColor(col)
+				}
+			}
+			if !hasRadii {
+				addRadius(st.BorderRadius)
+			}
+			if !hasShadows {
+				if normSh := normalizeShadowValue(st.BoxShadow); normSh != "" {
+					allowedShadows[normSh] = true
+				}
+			}
+		}
+		if !hasRadii && pol.MaxBorderRadius != "" {
+			addRadius(pol.MaxBorderRadius)
 		}
 	}
 

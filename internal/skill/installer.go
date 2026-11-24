@@ -101,9 +101,9 @@ func Install(opts InstallOptions) (InstallResult, error) {
 		return InstallResult{}, err
 	}
 
-	files, err := BundleFiles()
+	files, err := BundleFilesForSchool(s)
 	if err != nil {
-		return InstallResult{}, fmt.Errorf("loading embedded skill bundle: %w", err)
+		return InstallResult{}, fmt.Errorf("loading skill bundle for %s: %w", s.Name(), err)
 	}
 
 	if !opts.Force {
@@ -306,11 +306,6 @@ func Status(opts StatusOptions) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 
-	files, err := BundleFiles()
-	if err != nil {
-		return StatusReport{}, fmt.Errorf("loading embedded skill bundle: %w", err)
-	}
-
 	report := StatusReport{
 		Healthy:        true,
 		CurrentVersion: ver,
@@ -319,7 +314,10 @@ func Status(opts StatusOptions) (StatusReport, error) {
 
 	anyInstalled := false
 	for _, tgt := range targets {
-		st := inspectTarget(tgt, ver, files)
+		st, err := inspectTarget(tgt, ver)
+		if err != nil {
+			return StatusReport{}, fmt.Errorf("loading embedded skill bundle: %w", err)
+		}
 		if st.Installed {
 			anyInstalled = true
 		}
@@ -368,7 +366,7 @@ func targetExists(dir string) bool {
 	return false
 }
 
-func inspectTarget(tgt targetSpec, currentVer string, files []BundleFile) TargetStatus {
+func inspectTarget(tgt targetSpec, currentVer string) (TargetStatus, error) {
 	st := TargetStatus{
 		Target:         tgt.name,
 		Path:           tgt.dir,
@@ -377,7 +375,7 @@ func inspectTarget(tgt targetSpec, currentVer string, files []BundleFile) Target
 
 	if !targetExists(tgt.dir) {
 		st.Error = "skill bundle not installed"
-		return st
+		return st, nil
 	}
 	st.Installed = true
 
@@ -385,18 +383,32 @@ func inspectTarget(tgt targetSpec, currentVer string, files []BundleFile) Target
 	rawManifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		st.Error = fmt.Sprintf("missing %s", ManifestFilename)
-		return st
+		return st, nil
 	}
 	var manifest Manifest
 	if err := json.Unmarshal(rawManifest, &manifest); err != nil {
 		st.Error = fmt.Sprintf("invalid %s: %v", ManifestFilename, err)
-		return st
+		return st, nil
 	}
 
 	st.ManifestValid = true
 	st.School = manifest.School
 	st.InstalledVersion = manifest.Version
 	st.VersionDrift = manifest.Version != currentVer
+
+	var files []BundleFile
+	if strings.TrimSpace(manifest.School) != "" {
+		var installedSchool school.School
+		if s, lookupErr := school.Lookup(manifest.School); lookupErr == nil {
+			installedSchool = s
+		}
+		files, err = BundleFilesForSchool(installedSchool)
+	} else {
+		files, err = BundleFiles()
+	}
+	if err != nil {
+		return TargetStatus{}, err
+	}
 
 	for _, f := range files {
 		dest := filepath.Join(tgt.dir, filepath.FromSlash(f.RelPath))
@@ -432,7 +444,7 @@ func inspectTarget(tgt targetSpec, currentVer string, files []BundleFile) Target
 	} else {
 		st.Error = strings.Join(reasons, "; ")
 	}
-	return st
+	return st, nil
 }
 
 func buildStatusHint(opts StatusOptions, anyInstalled bool) string {

@@ -259,98 +259,18 @@ func executeBuild(ctx context.Context, spec buildSpec) buildOutcome {
 			outPath:  outPath,
 			deps:     deps,
 			exitCode: ExitError,
-			err:      fmt.Errorf("format %q compilation requires Typst backend (not available in this build)", cfg.Format),
+			err:      fmt.Errorf("unsupported format %q", cfg.Format),
 		}
 	}
 }
 
 func collectDocumentAssetDeps(d *doc.SourceDocument) []string {
-	if d == nil {
-		return nil
-	}
-	var out []string
-	collectBlockAssetDeps(d.Blocks, d.Dir, &out)
-	for _, sn := range d.Sidenotes {
-		collectBlockAssetDeps(sn.Blocks, d.Dir, &out)
-		collectInlineAssetDeps(sn.Inlines, d.Dir, &out)
-	}
-	for _, sl := range d.Slides {
-		collectBlockAssetDeps(sl.Blocks, d.Dir, &out)
+	refs := d.ReferencedAssets()
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.ResolvedPath)
 	}
 	return out
-}
-
-func collectBlockAssetDeps(blocks []doc.Block, docDir string, out *[]string) {
-	for _, blk := range blocks {
-		switch node := blk.(type) {
-		case *doc.HeadingBlock:
-			collectInlineAssetDeps(node.Inlines, docDir, out)
-		case *doc.ParagraphBlock:
-			collectInlineAssetDeps(node.Inlines, docDir, out)
-		case *doc.ListBlock:
-			for _, item := range node.Items {
-				collectBlockAssetDeps(item, docDir, out)
-			}
-		case *doc.BlockquoteBlock:
-			collectBlockAssetDeps(node.Blocks, docDir, out)
-		case *doc.MarginNoteBlock:
-			collectBlockAssetDeps(node.Blocks, docDir, out)
-		case *doc.WideBlock:
-			collectBlockAssetDeps(node.Blocks, docDir, out)
-		case *doc.ColumnsBlock:
-			for _, col := range node.Columns {
-				collectBlockAssetDeps(col, docDir, out)
-			}
-		case *doc.TableBlock:
-			for _, cell := range node.Headers {
-				collectInlineAssetDeps(cell.Inlines, docDir, out)
-			}
-			for _, row := range node.Rows {
-				for _, cell := range row {
-					collectInlineAssetDeps(cell.Inlines, docDir, out)
-				}
-			}
-		case *doc.FigureBlock:
-			if node.ResolvedPath != "" {
-				*out = append(*out, node.ResolvedPath)
-			} else if p := resolveLocalAssetPath(docDir, node.Src); p != "" {
-				*out = append(*out, p)
-			}
-		}
-	}
-}
-
-func collectInlineAssetDeps(inlines []doc.Inline, docDir string, out *[]string) {
-	for _, in := range inlines {
-		switch node := in.(type) {
-		case *doc.EmphasisInline:
-			collectInlineAssetDeps(node.Children, docDir, out)
-		case *doc.LinkInline:
-			collectInlineAssetDeps(node.Children, docDir, out)
-		case *doc.ImageInline:
-			if p := resolveLocalAssetPath(docDir, node.Src); p != "" {
-				*out = append(*out, p)
-			}
-		}
-	}
-}
-
-func resolveLocalAssetPath(docDir, src string) string {
-	trimmed := strings.TrimSpace(src)
-	lower := strings.ToLower(trimmed)
-	if trimmed == "" ||
-		strings.HasPrefix(lower, "http://") ||
-		strings.HasPrefix(lower, "https://") ||
-		strings.HasPrefix(lower, "data:") {
-		return ""
-	}
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed)
-	}
-	if docDir == "" {
-		return filepath.Clean(filepath.FromSlash(trimmed))
-	}
-	return filepath.Join(docDir, filepath.FromSlash(trimmed))
 }
 
 func collectConfigAssetDeps(docDir string, overrides ...config.Override) []string {

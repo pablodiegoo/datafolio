@@ -414,13 +414,13 @@ func renderTypst(m exportModel) string {
 		if val == "" {
 			return
 		}
-		emit(name, typstColorExpr(val))
+		emit(name, TypstColor(val))
 	}
 	emitDim := func(name, val string) {
 		if val == "" {
 			return
 		}
-		emit(name, typstDimExpr(val))
+		emit(name, TypstDim(val))
 	}
 
 	emitColor("df-paper", m.active.Paper)
@@ -435,9 +435,9 @@ func renderTypst(m exportModel) string {
 	emitColor("df-rule", m.active.Rule)
 	emitColor("df-rule-strong", m.active.RuleStrong)
 
-	emit("df-font-serif", typstFontExpr(m.serifRaw))
-	emit("df-font-mono", typstFontExpr(m.monoRaw))
-	emit("df-font-sans", typstFontExpr(m.sansRaw))
+	emit("df-font-serif", TypstFont(m.serifRaw))
+	emit("df-font-mono", TypstFont(m.monoRaw))
+	emit("df-font-sans", TypstFont(m.sansRaw))
 
 	emitDim("df-main-width", m.active.MainWidth)
 	emitDim("df-margin-width", m.active.MarginWidth)
@@ -719,15 +719,17 @@ func formatSCSSValue(tok Token) string {
 	return v
 }
 
-func typstColorExpr(raw string) string {
+// TypstColor formats a CSS/DTCG color value into a Typst `rgb(...)` expression.
+func TypstColor(raw string) string {
 	rgba, err := ParseColor(raw)
 	if err != nil {
-		return typstString(raw)
+		return typstString(strings.TrimSpace(raw))
 	}
 	return fmt.Sprintf("rgb(%q)", rgba.Hex())
 }
 
-func typstFontExpr(raw string) string {
+// TypstFont formats a font family or comma-separated font stack as a Typst font value.
+func TypstFont(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return `""`
@@ -740,8 +742,11 @@ func typstFontExpr(raw string) string {
 	for _, p := range parts {
 		name := strings.Trim(strings.TrimSpace(p), `"'`)
 		if name != "" {
-			quoted = append(quoted, strconv.Quote(name))
+			quoted = append(quoted, typstString(name))
 		}
+	}
+	if len(quoted) == 0 {
+		return `""`
 	}
 	if len(quoted) == 1 {
 		return quoted[0]
@@ -749,10 +754,11 @@ func typstFontExpr(raw string) string {
 	return "(" + strings.Join(quoted, ", ") + ")"
 }
 
-func typstDimExpr(raw string) string {
+// TypstDim converts CSS/DTCG dimensions (`px`, `rem`, `pt`, `mm`, etc.) into Typst lengths.
+func TypstDim(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
-		return `""`
+		return "0pt"
 	}
 	lower := strings.ToLower(s)
 	if strings.HasSuffix(lower, "px") {
@@ -785,13 +791,16 @@ func typstDimExpr(raw string) string {
 func typstTokenExpr(tok Token) string {
 	v := strings.TrimSpace(tok.Value)
 	if tok.Type == "color" || looksLikeColor(v) {
-		return typstColorExpr(v)
+		return TypstColor(v)
 	}
 	if tok.Type == "fontFamily" {
-		return typstFontExpr(v)
+		return TypstFont(v)
 	}
 	if tok.Type == "dimension" {
-		return typstDimExpr(v)
+		if v == "" {
+			return `""`
+		}
+		return TypstDim(v)
 	}
 	return typstString(v)
 }

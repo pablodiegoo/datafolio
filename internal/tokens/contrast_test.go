@@ -114,3 +114,28 @@ color:
 		}
 	}
 }
+
+func TestCheckContrastSkipsGenericTintTokens(t *testing.T) {
+	tintYAML := `
+color:
+  light:
+    paper: { $type: color, $value: "#ffffff" }
+    ink: { $type: color, $value: "#111111" }
+    tint: { $type: color, $value: "#f8fafc" }
+    brand_tint: { $type: color, $value: "#eff6ff" }
+    text_tint: { $type: color, $value: "#f1f5f9" }
+`
+	c, err := tokens.Parse([]byte(tintYAML), "tint.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := tokens.CheckContrast(c, 4.5, 3.0)
+	if err != nil {
+		t.Fatalf("CheckContrast error: %v", err)
+	}
+	for _, r := range results {
+		if strings.Contains(r.ForegroundToken, "tint") {
+			t.Fatalf("tint token %q should be skipped as decorative surface, got result: %s", r.ForegroundToken, r.Format())
+		}
+	}
+}

@@ -78,8 +78,10 @@ Final paragraph.
 				"#8b1e1e",
 				"65%",
 				"30%",
-				"border-radius: 0px",
-				"box-shadow: none",
+				"--df-radius: 0px",
+				"--df-shadow: none",
+				"border-radius: var(--df-radius)",
+				"box-shadow: var(--df-shadow)",
 			} {
 				if !strings.Contains(html, want) {
 					t.Errorf("HTML missing expected fragment %q", want)

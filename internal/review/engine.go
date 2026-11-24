@@ -56,11 +56,6 @@ const (
 	kindWeb
 )
 
-// webReviewerFunc is the extension hook where static web/template Review (Ticket #10) attaches.
-type webReviewerFunc func(ctx context.Context, path, displayPath string, s school.School, contract *tokens.Contract) ([]Finding, error)
-
-var defaultWebReviewer webReviewerFunc
-
 // Review statically audits all target Markdown Source Documents, Token Contracts, and web files.
 func Review(ctx context.Context, opts Options) (Report, error) {
 	opts = normalizeOptions(opts)
@@ -235,17 +230,15 @@ func auditTargetFile(
 
 	case kindWeb:
 		report.Files++
-		if defaultWebReviewer != nil {
-			s, contract, err := resolveWebSchoolAndContract(cleanAbs, schoolOverride, explicitContract, contractCache)
-			if err != nil {
-				return err
-			}
-			findings, err := defaultWebReviewer(ctx, cleanAbs, disp, s, contract)
-			if err != nil {
-				return err
-			}
-			report.Findings = append(report.Findings, findings...)
+		s, contract, err := resolveWebSchoolAndContract(cleanAbs, schoolOverride, explicitContract, contractCache)
+		if err != nil {
+			return err
 		}
+		findings, err := reviewWebFile(ctx, cleanAbs, disp, s, contract)
+		if err != nil {
+			return err
+		}
+		report.Findings = append(report.Findings, findings...)
 		return nil
 	}
 	return nil

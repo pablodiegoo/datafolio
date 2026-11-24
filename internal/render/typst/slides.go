@@ -337,66 +337,46 @@ func mergeSlideChrome(base config.ChromeSpec, ov doc.SlideChromeOverride, isFirs
 }
 
 func blocksHaveMarginAnnotations(blocks []doc.Block) bool {
-	for _, blk := range blocks {
+	found := false
+	doc.WalkBlocks(blocks, func(blk doc.Block) {
+		if found {
+			return
+		}
 		switch node := blk.(type) {
 		case *doc.MarginNoteBlock:
-			return true
+			found = true
 		case *doc.ParagraphBlock:
-			if inlinesHaveSidenoteRef(node.Inlines) {
-				return true
-			}
+			found = inlinesHaveSidenoteRef(node.Inlines)
 		case *doc.HeadingBlock:
-			if inlinesHaveSidenoteRef(node.Inlines) {
-				return true
-			}
-		case *doc.ListBlock:
-			for _, item := range node.Items {
-				if blocksHaveMarginAnnotations(item) {
-					return true
-				}
-			}
-		case *doc.BlockquoteBlock:
-			if blocksHaveMarginAnnotations(node.Blocks) {
-				return true
-			}
-		case *doc.ColumnsBlock:
-			for _, col := range node.Columns {
-				if blocksHaveMarginAnnotations(col) {
-					return true
-				}
-			}
+			found = inlinesHaveSidenoteRef(node.Inlines)
 		case *doc.TableBlock:
 			for _, h := range node.Headers {
 				if inlinesHaveSidenoteRef(h.Inlines) {
-					return true
+					found = true
+					return
 				}
 			}
 			for _, row := range node.Rows {
 				for _, c := range row {
 					if inlinesHaveSidenoteRef(c.Inlines) {
-						return true
+						found = true
+						return
 					}
 				}
 			}
 		}
-	}
-	return false
+	})
+	return found
 }
 
 func inlinesHaveSidenoteRef(inlines []doc.Inline) bool {
-	for _, in := range inlines {
-		switch node := in.(type) {
-		case *doc.SidenoteRefInline:
-			return true
-		case *doc.EmphasisInline:
-			if inlinesHaveSidenoteRef(node.Children) {
-				return true
-			}
-		case *doc.LinkInline:
-			if inlinesHaveSidenoteRef(node.Children) {
-				return true
+	found := false
+	doc.WalkInlines(inlines, func(in doc.Inline) {
+		if !found {
+			if _, ok := in.(*doc.SidenoteRefInline); ok {
+				found = true
 			}
 		}
-	}
-	return false
+	})
+	return found
 }

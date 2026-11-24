@@ -69,7 +69,7 @@ type SourceDocument struct {
 	Slides         []Slide
 }
 
-// SidenoteByID looks up a parsed Sidenote definition by its raw footnote identifier.
+// SidenoteByID looks up a parsed Sidenote definition by its raw Sidenote identifier.
 func (d *SourceDocument) SidenoteByID(id string) (SidenoteDef, bool) {
 	if d == nil {
 		return SidenoteDef{}, false

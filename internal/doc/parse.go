@@ -289,7 +289,7 @@ func tryFigureFromInlines(inlines []Inline, docDir string, line int) (*FigureBlo
 
 	return &FigureBlock{
 		Src:          img.Src,
-		ResolvedPath: resolveAssetPath(docDir, img.Src),
+		ResolvedPath: ResolveAssetPath(docDir, img.Src),
 		Caption:      caption,
 		Source:       source,
 		Line:         line,
@@ -531,18 +531,6 @@ func parseSourceText(raw string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func resolveAssetPath(docDir, src string) string {
-	trimmed := strings.TrimSpace(src)
-	lower := strings.ToLower(trimmed)
-	if trimmed == "" || strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
-		return ""
-	}
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed)
-	}
-	return filepath.Join(docDir, filepath.FromSlash(trimmed))
 }
 
 // InlinesPlainText flattens a slice of Inline nodes into plain text.

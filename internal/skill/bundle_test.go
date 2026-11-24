@@ -6,6 +6,7 @@ import (
 	"testing"
 	"unicode"
 
+	_ "github.com/pablodiegoo/datafolio/internal/school/tufte"
 	"github.com/pablodiegoo/datafolio/internal/skill"
 )
 
