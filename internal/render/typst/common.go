@@ -147,130 +147,13 @@ func PrepareWorkspace(d *doc.SourceDocument, cfg config.Config, tmpDir string) (
 }
 
 func collectAndValidateAssets(d *doc.SourceDocument, out *[]string) error {
-	var visitInlines func([]doc.Inline) error
-	visitInlines = func(inlines []doc.Inline) error {
-		for _, in := range inlines {
-			switch node := in.(type) {
-			case *doc.EmphasisInline:
-				if err := visitInlines(node.Children); err != nil {
-					return err
-				}
-			case *doc.LinkInline:
-				if err := visitInlines(node.Children); err != nil {
-					return err
-				}
-			case *doc.ImageInline:
-				resolved := resolveLocalAsset(d.Dir, node.Src)
-				if resolved != "" {
-					if _, err := os.Stat(resolved); err != nil {
-						return fmt.Errorf("figure %q: %w", node.Src, err)
-					}
-					*out = append(*out, resolved)
-				}
-			}
+	for _, ref := range d.ReferencedAssets() {
+		if _, err := os.Stat(ref.ResolvedPath); err != nil {
+			return fmt.Errorf("figure %q: %w", ref.Src, err)
 		}
-		return nil
-	}
-
-	var visitBlocks func([]doc.Block) error
-	visitBlocks = func(blocks []doc.Block) error {
-		for _, blk := range blocks {
-			switch node := blk.(type) {
-			case *doc.HeadingBlock:
-				if err := visitInlines(node.Inlines); err != nil {
-					return err
-				}
-			case *doc.ParagraphBlock:
-				if err := visitInlines(node.Inlines); err != nil {
-					return err
-				}
-			case *doc.ListBlock:
-				for _, item := range node.Items {
-					if err := visitBlocks(item); err != nil {
-						return err
-					}
-				}
-			case *doc.BlockquoteBlock:
-				if err := visitBlocks(node.Blocks); err != nil {
-					return err
-				}
-			case *doc.MarginNoteBlock:
-				if err := visitBlocks(node.Blocks); err != nil {
-					return err
-				}
-			case *doc.WideBlock:
-				if err := visitBlocks(node.Blocks); err != nil {
-					return err
-				}
-			case *doc.ColumnsBlock:
-				for _, col := range node.Columns {
-					if err := visitBlocks(col); err != nil {
-						return err
-					}
-				}
-			case *doc.TableBlock:
-				for _, cell := range node.Headers {
-					if err := visitInlines(cell.Inlines); err != nil {
-						return err
-					}
-				}
-				for _, row := range node.Rows {
-					for _, cell := range row {
-						if err := visitInlines(cell.Inlines); err != nil {
-							return err
-						}
-					}
-				}
-			case *doc.FigureBlock:
-				if isLocalFigure(node.Src) {
-					target := node.ResolvedPath
-					if target == "" {
-						target = resolveLocalAsset(d.Dir, node.Src)
-					}
-					if target != "" {
-						if _, err := os.Stat(target); err != nil {
-							return fmt.Errorf("figure %q: %w", node.Src, err)
-						}
-						*out = append(*out, target)
-					}
-				}
-			}
-		}
-		return nil
-	}
-
-	if err := visitBlocks(d.Blocks); err != nil {
-		return err
-	}
-	for _, sn := range d.Sidenotes {
-		if err := visitBlocks(sn.Blocks); err != nil {
-			return err
-		}
+		*out = append(*out, ref.ResolvedPath)
 	}
 	return nil
-}
-
-func isLocalFigure(src string) bool {
-	trimmed := strings.TrimSpace(src)
-	lower := strings.ToLower(trimmed)
-	return trimmed != "" &&
-		!strings.HasPrefix(lower, "http://") &&
-		!strings.HasPrefix(lower, "https://") &&
-		!strings.HasPrefix(lower, "data:")
-}
-
-func resolveLocalAsset(docDir, src string) string {
-	if !isLocalFigure(src) {
-		return ""
-	}
-	trimmed := strings.TrimSpace(src)
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed)
-	}
-	if docDir == "" {
-		return filepath.Clean(filepath.FromSlash(trimmed))
-	}
-	return filepath.Join(docDir, filepath.FromSlash(trimmed))
 }
 
 func commonAncestorDir(a, b string) (string, bool) {
@@ -410,67 +293,6 @@ func TypstLangRegion(lang string) (string, string) {
 	return "en", ""
 }
 
-// TypstColor formats a CSS/DTCG color value into a Typst `rgb(...)` expression.
-func TypstColor(raw string) string {
-	rgba, err := tokens.ParseColor(raw)
-	if err != nil {
-		return TypstString(strings.TrimSpace(raw))
-	}
-	return fmt.Sprintf("rgb(%q)", rgba.Hex())
-}
-
-// TypstFont formats a font family or comma-separated font stack as a Typst font value.
-func TypstFont(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return `""`
-	}
-	if !strings.ContainsRune(s, ',') {
-		name := strings.Trim(s, `"'`)
-		return TypstString(name)
-	}
-	parts := strings.Split(s, ",")
-	quoted := make([]string, 0, len(parts))
-	for _, p := range parts {
-		name := strings.Trim(strings.TrimSpace(p), `"'`)
-		if name != "" {
-			quoted = append(quoted, TypstString(name))
-		}
-	}
-	if len(quoted) == 0 {
-		return `""`
-	}
-	if len(quoted) == 1 {
-		return quoted[0]
-	}
-	return "(" + strings.Join(quoted, ", ") + ")"
-}
-
-// TypstDim converts CSS/DTCG dimensions (`px`, `rem`, `pt`, `mm`, etc.) into Typst lengths.
-func TypstDim(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return "0pt"
-	}
-	lower := strings.ToLower(s)
-	if strings.HasSuffix(lower, "px") {
-		numStr := strings.TrimSpace(s[:len(s)-2])
-		if v, err := strconv.ParseFloat(numStr, 64); err == nil {
-			if v == 0 {
-				return "0pt"
-			}
-			return strconv.FormatFloat(v*0.75, 'f', -1, 64) + "pt"
-		}
-	}
-	if strings.HasSuffix(lower, "rem") {
-		numStr := strings.TrimSpace(s[:len(s)-3])
-		if v, err := strconv.ParseFloat(numStr, 64); err == nil {
-			return strconv.FormatFloat(v, 'f', -1, 64) + "em"
-		}
-	}
-	return s
-}
-
 // TypstString encodes a Go string into a safe Typst string literal preserving UTF-8 characters.
 func TypstString(s string) string {
 	var b strings.Builder
@@ -566,23 +388,23 @@ func ParsePercentRatio(raw string, fallback float64) float64 {
 
 // EmitSchoolPreamble writes canonical DataFolio School, Theme, font, booktabs, and localized label bindings.
 func EmitSchoolPreamble(b *strings.Builder, tok school.SchoolTokens, labels school.Labels) {
-	fmt.Fprintf(b, "#let df-paper = %s\n", TypstColor(tok.Paper))
-	fmt.Fprintf(b, "#let df-paper-subtle = %s\n", TypstColor(tok.PaperSubtle))
-	fmt.Fprintf(b, "#let df-paper-alt = %s\n", TypstColor(tok.PaperAlt))
-	fmt.Fprintf(b, "#let df-ink = %s\n", TypstColor(tok.Ink))
-	fmt.Fprintf(b, "#let df-ink-soft = %s\n", TypstColor(tok.InkSoft))
-	fmt.Fprintf(b, "#let df-muted = %s\n", TypstColor(tok.Muted))
-	fmt.Fprintf(b, "#let df-accent = %s\n", TypstColor(tok.Accent))
-	fmt.Fprintf(b, "#let df-ochre = %s\n", TypstColor(tok.Ochre))
-	fmt.Fprintf(b, "#let df-forest = %s\n", TypstColor(tok.Forest))
-	fmt.Fprintf(b, "#let df-rule = %s\n", TypstColor(tok.Rule))
-	fmt.Fprintf(b, "#let df-rule-strong = %s\n", TypstColor(tok.RuleStrong))
-	fmt.Fprintf(b, "#let df-font-serif = %s\n", TypstFont(tok.SerifFont))
-	fmt.Fprintf(b, "#let df-font-mono = %s\n", TypstFont(tok.MonoFont))
-	fmt.Fprintf(b, "#let df-font-sans = %s\n", TypstFont(tok.SansFont))
-	fmt.Fprintf(b, "#let df-booktabs-top = %s\n", TypstDim(tok.BooktabsTopRule))
-	fmt.Fprintf(b, "#let df-booktabs-mid = %s\n", TypstDim(tok.BooktabsMidRule))
-	fmt.Fprintf(b, "#let df-booktabs-row = %s\n", TypstDim(tok.BooktabsRowRule))
+	fmt.Fprintf(b, "#let df-paper = %s\n", tokens.TypstColor(tok.Paper))
+	fmt.Fprintf(b, "#let df-paper-subtle = %s\n", tokens.TypstColor(tok.PaperSubtle))
+	fmt.Fprintf(b, "#let df-paper-alt = %s\n", tokens.TypstColor(tok.PaperAlt))
+	fmt.Fprintf(b, "#let df-ink = %s\n", tokens.TypstColor(tok.Ink))
+	fmt.Fprintf(b, "#let df-ink-soft = %s\n", tokens.TypstColor(tok.InkSoft))
+	fmt.Fprintf(b, "#let df-muted = %s\n", tokens.TypstColor(tok.Muted))
+	fmt.Fprintf(b, "#let df-accent = %s\n", tokens.TypstColor(tok.Accent))
+	fmt.Fprintf(b, "#let df-ochre = %s\n", tokens.TypstColor(tok.Ochre))
+	fmt.Fprintf(b, "#let df-forest = %s\n", tokens.TypstColor(tok.Forest))
+	fmt.Fprintf(b, "#let df-rule = %s\n", tokens.TypstColor(tok.Rule))
+	fmt.Fprintf(b, "#let df-rule-strong = %s\n", tokens.TypstColor(tok.RuleStrong))
+	fmt.Fprintf(b, "#let df-font-serif = %s\n", tokens.TypstFont(tok.SerifFont))
+	fmt.Fprintf(b, "#let df-font-mono = %s\n", tokens.TypstFont(tok.MonoFont))
+	fmt.Fprintf(b, "#let df-font-sans = %s\n", tokens.TypstFont(tok.SansFont))
+	fmt.Fprintf(b, "#let df-booktabs-top = %s\n", tokens.TypstDim(tok.BooktabsTopRule))
+	fmt.Fprintf(b, "#let df-booktabs-mid = %s\n", tokens.TypstDim(tok.BooktabsMidRule))
+	fmt.Fprintf(b, "#let df-booktabs-row = %s\n", tokens.TypstDim(tok.BooktabsRowRule))
 	fmt.Fprintf(b, "#let df-label-figure = %s\n", TypstString(fallbackStr(labels.Figure, "Figure")))
 	fmt.Fprintf(b, "#let df-label-table = %s\n", TypstString(fallbackStr(labels.Table, "Table")))
 	fmt.Fprintf(b, "#let df-label-source = %s\n", TypstString(fallbackStr(labels.Source, "Source")))
@@ -1254,12 +1076,16 @@ func renderFigure(b *strings.Builder, node *doc.FigureBlock, ctx *RenderContext)
 }
 
 func mapFigurePath(rawSrc, resolvedPath string, ctx *RenderContext) (string, error) {
-	if !isLocalFigure(rawSrc) {
+	docDir := ""
+	if ctx != nil && ctx.Doc != nil {
+		docDir = ctx.Doc.Dir
+	}
+	if doc.ResolveAssetPath(docDir, rawSrc) == "" {
 		return strings.TrimSpace(rawSrc), nil
 	}
 	target := resolvedPath
 	if target == "" && ctx != nil && ctx.Doc != nil {
-		target = resolveLocalAsset(ctx.Doc.Dir, rawSrc)
+		target = doc.ResolveAssetPath(ctx.Doc.Dir, rawSrc)
 	}
 	if target == "" {
 		return "", fmt.Errorf("figure %q: empty path", rawSrc)

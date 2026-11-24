@@ -661,7 +661,7 @@ func classifyContrastRole(leaf string) (level string, customReq float64, checkSe
 	case "paper", "paper_subtle", "paper_alt", "surface_canvas", "surface_card",
 		"surface_subtle", "surface_inset", "canvas", "background", "bg", "surface",
 		"rule", "border_subtle", "border_strong", "divider", "border", "rule_neutral",
-		"accent_subtle", "lagna_tint", "highlight":
+		"accent_subtle", "highlight":
 		return "", 0, false
 	case "rule_strong":
 		return "large", 0, false
@@ -671,6 +671,9 @@ func classifyContrastRole(leaf string) (level string, customReq float64, checkSe
 		"accent", "ochre", "forest", "primary", "primary_dark", "secondary",
 		"positive", "negative":
 		return "normal", 0, false
+	}
+	if strings.HasSuffix(leaf, "_tint") || leaf == "tint" {
+		return "", 0, false
 	}
 	if strings.Contains(leaf, "large") || strings.HasSuffix(leaf, "_ui") || strings.HasPrefix(leaf, "ui_") || leaf == "ui" || leaf == "focus_ring" {
 		return "large", 0, false

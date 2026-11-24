@@ -901,8 +901,19 @@ func buildStylesheet(tok school.SchoolTokens) string {
 
 *, *::before, *::after {
   box-sizing: border-box;
-  border-radius: 0px;
-  box-shadow: none;
+}
+
+.df-margin-note,
+.df-sidenote,
+.df-kpi-strip,
+.df-blockquote,
+blockquote,
+.df-code,
+pre,
+.df-figure img,
+.df-figure svg {
+  border-radius: var(--df-radius);
+  box-shadow: var(--df-shadow);
 }
 
 html, body {

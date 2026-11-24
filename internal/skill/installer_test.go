@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/pablodiegoo/datafolio/internal/school"
 	_ "github.com/pablodiegoo/datafolio/internal/school/tufte"
 	"github.com/pablodiegoo/datafolio/internal/skill"
 )
@@ -425,5 +427,81 @@ func TestStatusReportsHealthyDriftModifiedMissingAndDiscovery(t *testing.T) {
 	}
 	if repUnmanaged.Healthy || !repUnmanaged.Targets[0].Installed || repUnmanaged.Targets[0].ManifestValid {
 		t.Fatalf("expected installed+untracked status for pre-existing SKILL.md, got %+v", repUnmanaged)
+	}
+}
+
+type stubSkillSchool struct{}
+
+func (s *stubSkillSchool) Name() string { return "stub-editorial" }
+func (s *stubSkillSchool) Tokens(theme string) (school.SchoolTokens, error) {
+	return school.SchoolTokens{Theme: theme}, nil
+}
+func (s *stubSkillSchool) Labels(string) school.Labels { return school.Labels{} }
+func (s *stubSkillSchool) Policy() school.ReviewPolicy { return school.ReviewPolicy{} }
+func (s *stubSkillSchool) SkillReference() (string, []byte) {
+	return "references/stub-editorial-school.md", []byte("# Stub Editorial School Reference\n")
+}
+
+var registerStubSchoolOnce sync.Once
+
+func TestInstallAndStatusUseSchoolSkillReference(t *testing.T) {
+	t.Parallel()
+
+	registerStubSchoolOnce.Do(func() {
+		school.Register(&stubSkillSchool{})
+	})
+
+	workDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	res, err := skill.Install(skill.InstallOptions{
+		WorkDir: workDir,
+		HomeDir: homeDir,
+		Version: "0.1.0-test",
+		School:  "stub-editorial",
+	})
+	if err != nil {
+		t.Fatalf("Install() error: %v", err)
+	}
+	installDir := res.Installations[0].Path
+
+	stubRef := filepath.Join(installDir, "references", "stub-editorial-school.md")
+	gotStub, err := os.ReadFile(stubRef)
+	if err != nil {
+		t.Fatalf("expected school-specific skill reference at %s: %v", stubRef, err)
+	}
+	if string(gotStub) != "# Stub Editorial School Reference\n" {
+		t.Fatalf("unexpected stub reference content: %q", string(gotStub))
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "references", "tufte-school.md")); !os.IsNotExist(err) {
+		t.Fatalf("tufte-school.md must not be installed when --school is stub-editorial")
+	}
+
+	rep, err := skill.Status(skill.StatusOptions{
+		WorkDir: workDir,
+		HomeDir: homeDir,
+		Version: "0.1.0-test",
+	})
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	if !rep.Healthy || len(rep.Targets) != 1 || rep.Targets[0].School != "stub-editorial" {
+		t.Fatalf("expected healthy stub-editorial status, got %+v", rep)
+	}
+
+	// Modifying the school-specific reference must be caught by Status.
+	if err := os.WriteFile(stubRef, []byte("tampered\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repMod, err := skill.Status(skill.StatusOptions{
+		WorkDir: workDir,
+		HomeDir: homeDir,
+		Version: "0.1.0-test",
+	})
+	if err != nil {
+		t.Fatalf("Status() after edit error: %v", err)
+	}
+	if repMod.Healthy || !slices.Equal(repMod.Targets[0].ModifiedFiles, []string{"references/stub-editorial-school.md"}) {
+		t.Fatalf("expected ModifiedFiles=[references/stub-editorial-school.md], got %+v", repMod)
 	}
 }

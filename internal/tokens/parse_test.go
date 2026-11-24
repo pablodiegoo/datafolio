@@ -246,3 +246,17 @@ design_tokens:
 		t.Fatalf("expected error when DESIGN.md contains no token blocks")
 	}
 }
+
+func TestExtractYAMLBlocksLineNumbersAndFences(t *testing.T) {
+	md := "\xef\xbb\xbf---\r\ndesign_tokens:\r\n  name: \"Test\"\r\n---\r\n\r\n```json\r\n{}\r\n```\r\n\r\n~~~yml\r\ncolor:\r\n  paper: \"#fff\"\r\n~~~\r\n"
+	blocks := tokens.ExtractYAMLBlocks([]byte(md))
+	if len(blocks) != 2 {
+		t.Fatalf("got %d YAML blocks, want 2: %+v", len(blocks), blocks)
+	}
+	if !blocks[0].Frontmatter || blocks[0].StartLine != 2 || !strings.Contains(string(blocks[0].Content), "design_tokens:") {
+		t.Fatalf("unexpected frontmatter block: %+v", blocks[0])
+	}
+	if blocks[1].Frontmatter || blocks[1].StartLine != 11 || !strings.Contains(string(blocks[1].Content), "paper:") {
+		t.Fatalf("unexpected fenced YAML block: %+v", blocks[1])
+	}
+}

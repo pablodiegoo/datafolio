@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pablodiegoo/datafolio/internal/doc"
 	"github.com/pablodiegoo/datafolio/internal/school"
 	"github.com/pablodiegoo/datafolio/internal/tokens"
 	"gopkg.in/yaml.v3"
@@ -148,89 +147,12 @@ func findYAMLChild(node *yaml.Node, key string) *yaml.Node {
 }
 
 func findMarkdownTokenLine(raw []byte, segments []string) int {
-	fmBytes, _, bodyOffset, err := doc.SplitFrontmatter(raw)
-	if err == nil && len(fmBytes) > 0 {
-		if relLine := findYAMLTokenLine(fmBytes, segments); relLine > 0 {
-			return 1 + relLine
-		}
-	}
-
-	text := strings.ReplaceAll(strings.TrimPrefix(string(raw), "\xef\xbb\xbf"), "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	startIdx := 0
-	if bodyOffset > 1 && bodyOffset-1 <= len(lines) {
-		startIdx = bodyOffset - 1
-	}
-
-	inFence := false
-	fenceChar := byte(0)
-	fenceLen := 0
-	isYAML := false
-	blockStartLine := 0
-	var buf []string
-
-	for i := startIdx; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if !inFence {
-			if fc, fl, lang, ok := parseFenceStart(trimmed); ok {
-				inFence = true
-				fenceChar = fc
-				fenceLen = fl
-				isYAML = lang == "yaml" || lang == "yml"
-				blockStartLine = i + 2 // 1-based line of first content line inside fence
-				buf = buf[:0]
-			}
-			continue
-		}
-		if isFenceClose(trimmed, fenceChar, fenceLen) {
-			if isYAML && len(buf) > 0 {
-				if relLine := findYAMLTokenLine([]byte(strings.Join(buf, "\n")), segments); relLine > 0 {
-					return blockStartLine + relLine - 1
-				}
-			}
-			inFence = false
-			isYAML = false
-			buf = buf[:0]
-			continue
-		}
-		if isYAML {
-			buf = append(buf, lines[i])
+	for _, blk := range tokens.ExtractYAMLBlocks(raw) {
+		if relLine := findYAMLTokenLine(blk.Content, segments); relLine > 0 {
+			return blk.StartLine + relLine - 1
 		}
 	}
 	return 0
-}
-
-func parseFenceStart(trimmed string) (byte, int, string, bool) {
-	if len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
-		return 0, 0, "", false
-	}
-	fc := trimmed[0]
-	n := 0
-	for n < len(trimmed) && trimmed[n] == fc {
-		n++
-	}
-	if n < 3 {
-		return 0, 0, "", false
-	}
-	info := strings.ToLower(strings.TrimSpace(trimmed[n:]))
-	fields := strings.Fields(info)
-	lang := ""
-	if len(fields) > 0 {
-		lang = fields[0]
-	}
-	return fc, n, lang, true
-}
-
-func isFenceClose(trimmed string, fc byte, minLen int) bool {
-	if len(trimmed) < minLen {
-		return false
-	}
-	for i := 0; i < len(trimmed); i++ {
-		if trimmed[i] != fc {
-			return false
-		}
-	}
-	return true
 }
 
 func findJSONTokenLine(raw []byte, segments []string) int {

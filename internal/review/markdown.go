@@ -176,30 +176,16 @@ func checkDisallowedEmojis(d *doc.SourceDocument, rawLines []string, tableLines 
 		}
 	}
 
-	var walkBlocks func([]doc.Block)
-	walkBlocks = func(blocks []doc.Block) {
-		for _, blk := range blocks {
+	scanBlocks := func(blocks []doc.Block) {
+		doc.WalkBlocks(blocks, func(blk doc.Block) {
 			switch node := blk.(type) {
 			case *doc.HeadingBlock:
 				scanInlines(node.Inlines, node.Line)
 			case *doc.ParagraphBlock:
 				scanInlines(node.Inlines, node.Line)
-			case *doc.ListBlock:
-				for _, item := range node.Items {
-					walkBlocks(item)
-				}
-			case *doc.BlockquoteBlock:
-				walkBlocks(node.Blocks)
 			case *doc.MarginNoteBlock:
 				if strings.TrimSpace(node.Title) != "" {
 					scanString(node.Title, node.Line)
-				}
-				walkBlocks(node.Blocks)
-			case *doc.WideBlock:
-				walkBlocks(node.Blocks)
-			case *doc.ColumnsBlock:
-				for _, col := range node.Columns {
-					walkBlocks(col)
 				}
 			case *doc.KPIBlock:
 				for _, item := range node.Items {
@@ -241,15 +227,15 @@ func checkDisallowedEmojis(d *doc.SourceDocument, rawLines []string, tableLines 
 					scanString(node.Source, srcLine)
 				}
 			}
-		}
+		})
 	}
 
-	walkBlocks(d.Blocks)
+	scanBlocks(d.Blocks)
 	for _, sn := range d.Sidenotes {
 		if strings.TrimSpace(sn.Title) != "" {
 			scanString(sn.Title, sn.Line)
 		}
-		walkBlocks(sn.Blocks)
+		scanBlocks(sn.Blocks)
 	}
 
 	return findings
@@ -275,36 +261,28 @@ func flattenInlinesWithLines(inlines []doc.Inline, startLine int, markSkippedWit
 		}
 	}
 
-	var visit func([]doc.Inline)
-	visit = func(nodes []doc.Inline) {
-		for _, in := range nodes {
-			switch node := in.(type) {
-			case *doc.TextInline:
-				cur.WriteString(node.Text)
-			case *doc.EmphasisInline:
-				visit(node.Children)
-			case *doc.LinkInline:
-				visit(node.Children)
-			case *doc.ImageInline:
-				if node.Alt != "" {
-					cur.WriteString(node.Alt)
-				}
-				if node.Title != "" {
-					cur.WriteByte(' ')
-					cur.WriteString(node.Title)
-				}
-			case *doc.SoftBreakInline, *doc.HardBreakInline:
-				flush()
-				curLine++
-			case *doc.CodeInline, *doc.MathInline:
-				if markSkippedWithBoundary {
-					cur.WriteByte('\x00')
-				}
+	doc.WalkInlines(inlines, func(in doc.Inline) {
+		switch node := in.(type) {
+		case *doc.TextInline:
+			cur.WriteString(node.Text)
+		case *doc.ImageInline:
+			if node.Alt != "" {
+				cur.WriteString(node.Alt)
+			}
+			if node.Title != "" {
+				cur.WriteByte(' ')
+				cur.WriteString(node.Title)
+			}
+		case *doc.SoftBreakInline, *doc.HardBreakInline:
+			flush()
+			curLine++
+		case *doc.CodeInline, *doc.MathInline:
+			if markSkippedWithBoundary {
+				cur.WriteByte('\x00')
 			}
 		}
-	}
+	})
 
-	visit(inlines)
 	flush()
 	return out
 }
@@ -574,9 +552,8 @@ func resolveTableLines(d *doc.SourceDocument, rawLines []string) map[*doc.TableB
 		return out
 	}
 
-	var walk func(blocks []doc.Block, minLine *int)
-	walk = func(blocks []doc.Block, minLine *int) {
-		for _, blk := range blocks {
+	walk := func(blocks []doc.Block, minLine *int) {
+		doc.WalkBlocks(blocks, func(blk doc.Block) {
 			switch node := blk.(type) {
 			case *doc.HeadingBlock:
 				if node.Line > *minLine {
@@ -602,38 +579,28 @@ func resolveTableLines(d *doc.SourceDocument, rawLines []string) map[*doc.TableB
 				if node.Line > *minLine {
 					*minLine = node.Line
 				}
-			case *doc.ListBlock:
-				for _, item := range node.Items {
-					walk(item, minLine)
-				}
 			case *doc.BlockquoteBlock:
 				if node.Line > *minLine {
 					*minLine = node.Line
 				}
-				walk(node.Blocks, minLine)
 			case *doc.MarginNoteBlock:
 				if node.Line > *minLine {
 					*minLine = node.Line
 				}
-				walk(node.Blocks, minLine)
 			case *doc.WideBlock:
 				if node.Line > *minLine {
 					*minLine = node.Line
 				}
-				walk(node.Blocks, minLine)
 			case *doc.ColumnsBlock:
 				if node.Line > *minLine {
 					*minLine = node.Line
-				}
-				for _, col := range node.Columns {
-					walk(col, minLine)
 				}
 			case *doc.TableBlock:
 				tLine := findTableHeaderLine(rawLines, *minLine, node)
 				out[node] = tLine
 				*minLine = tLine + 2 + len(node.Rows)
 			}
-		}
+		})
 	}
 
 	cursor := maxLine(d.BodyLineOffset)
@@ -699,42 +666,13 @@ func isGFMDelimiterLine(line string) bool {
 	return true
 }
 
-func walkNestedBlocks(blocks []doc.Block, visit func(doc.Block)) {
-	for _, blk := range blocks {
-		visit(blk)
-		switch node := blk.(type) {
-		case *doc.ListBlock:
-			for _, item := range node.Items {
-				walkNestedBlocks(item, visit)
-			}
-		case *doc.BlockquoteBlock:
-			walkNestedBlocks(node.Blocks, visit)
-		case *doc.MarginNoteBlock:
-			walkNestedBlocks(node.Blocks, visit)
-		case *doc.WideBlock:
-			walkNestedBlocks(node.Blocks, visit)
-		case *doc.ColumnsBlock:
-			for _, col := range node.Columns {
-				walkNestedBlocks(col, visit)
-			}
-		}
-	}
-}
-
-func walkDocumentAndSidenoteBlocks(d *doc.SourceDocument, visit func(doc.Block)) {
-	walkNestedBlocks(d.Blocks, visit)
-	for _, sn := range d.Sidenotes {
-		walkNestedBlocks(sn.Blocks, visit)
-	}
-}
-
 func checkTableAndFigureAttributions(d *doc.SourceDocument, tableLines map[*doc.TableBlock]int, policy school.ReviewPolicy, displayPath string) []Finding {
 	if !policy.RequireCaptions && !policy.RequireSources {
 		return nil
 	}
 	var findings []Finding
 
-	walkDocumentAndSidenoteBlocks(d, func(blk doc.Block) {
+	doc.WalkDocumentBlocks(d, func(blk doc.Block) {
 		switch node := blk.(type) {
 		case *doc.TableBlock:
 			line := tableLineOf(node, tableLines)
@@ -845,7 +783,7 @@ func buildDeletionPhrases(raw []string) []deletionPhrase {
 func checkDeletionTest(d *doc.SourceDocument, rawLines []string, displayPath string) []Finding {
 	var findings []Finding
 
-	walkDocumentAndSidenoteBlocks(d, func(blk doc.Block) {
+	doc.WalkDocumentBlocks(d, func(blk doc.Block) {
 		p, ok := blk.(*doc.ParagraphBlock)
 		if !ok {
 			return

@@ -383,3 +383,98 @@ func TestTokensUsageAndErrorExitCodes(t *testing.T) {
 		t.Fatalf("missing --from file: got exit %d, want %d", code, cli.ExitError)
 	}
 }
+
+func TestBuildHTMLTokensRadiusAndShadowOverrides(t *testing.T) {
+	dir := t.TempDir()
+
+	tokensYAML := `
+color:
+  paper: { $type: color, $value: "#ffffff" }
+  ink: { $type: color, $value: "#0f172a" }
+  accent: { $type: color, $value: "#1e3a8a" }
+radius:
+  default: { $type: dimension, $value: "8px" }
+shadow:
+  default: { $type: shadow, $value: "0 4px 12px rgba(15, 23, 42, 0.12)" }
+`
+	if err := os.WriteFile(filepath.Join(dir, "tokens.yaml"), []byte(tokensYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chart.svg"), []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	docMD := `---
+title: Token Radius & Shadow Monograph
+---
+
+Intro paragraph[^n1].
+
+[^n1]: Sidenote body.
+
+:::note
+Margin note body.
+:::
+
+:::kpi
+- Metric | 42 | Baseline
+:::
+
+> Blockquote surface.
+
+` + "```go\nvar x = 1\n```" + `
+
+![Chart caption](chart.svg)
+
+*Source: Test fixture*
+`
+	if err := os.WriteFile(filepath.Join(dir, "doc.md"), []byte(docMD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut := runCLI(t, dir, "build", "doc.md", "--to", "html", "--tokens", "tokens.yaml")
+	if code != cli.ExitSuccess {
+		t.Fatalf("build --to html --tokens failed (%d): %s", code, errOut)
+	}
+
+	htmlBytes, err := os.ReadFile(filepath.Join(dir, "doc.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBytes)
+
+	// Extract universal reset block to ensure border-radius: 0px / box-shadow: none do not clobber elements.
+	resetStart := strings.Index(html, "*, *::before, *::after")
+	if resetStart < 0 {
+		t.Fatalf("expected universal box-sizing reset in HTML stylesheet")
+	}
+	resetEnd := strings.Index(html[resetStart:], "}")
+	if resetEnd < 0 {
+		t.Fatalf("unterminated universal reset rule in HTML stylesheet")
+	}
+	resetBlock := html[resetStart : resetStart+resetEnd+1]
+	if strings.Contains(resetBlock, "border-radius") || strings.Contains(resetBlock, "box-shadow") {
+		t.Fatalf("universal reset must not hardcode border-radius or box-shadow, got:\n%s", resetBlock)
+	}
+	if !strings.Contains(resetBlock, "box-sizing: border-box;") {
+		t.Fatalf("universal reset missing box-sizing: border-box, got:\n%s", resetBlock)
+	}
+
+	for _, want := range []string{
+		"--df-radius: 8px;",
+		"--df-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);",
+		"border-radius: var(--df-radius);",
+		"box-shadow: var(--df-shadow);",
+		".df-margin-note",
+		".df-sidenote",
+		".df-kpi-strip",
+		".df-blockquote",
+		".df-code",
+		".df-figure img",
+		".df-figure svg",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML missing expected fragment %q", want)
+		}
+	}
+}

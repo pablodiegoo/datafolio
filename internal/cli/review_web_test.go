@@ -603,6 +603,98 @@ templ OxfordPanel(title string) {
 		}
 	})
 
+	t.Run("explicit --tokens DESIGN.md isolates contract colors and flags un-contracted tufte palette literals", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "DESIGN.md"), []byte(oxfordDesignMD), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Uses valid DESIGN.md colors (#1E3A8A, #FFFFFF) alongside un-contracted tufte defaults
+		// (#8b1e1e, #854d0e, #166534, #ded8ca).
+		mixedCSS := `.oxford-ok {
+  color: #1E3A8A;
+  background-color: #FFFFFF;
+}
+.tufte-leak {
+  color: #8b1e1e;
+  border-color: #854d0e;
+  outline-color: #166534;
+  background-color: #ded8ca;
+}
+`
+		if err := os.WriteFile(filepath.Join(dir, "mixed.css"), []byte(mixedCSS), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		code, out, errOut := runWebReview(t, dir, "review", "--tokens", "DESIGN.md", "mixed.css", "--format", "json")
+		if code != cli.ExitSuccess {
+			t.Fatalf("non-strict warnings: got exit %d, want %d (stderr=%s, stdout=%s)", code, cli.ExitSuccess, errOut, out)
+		}
+		rep := decodeWebReport(t, out)
+		if rep.WarnCount != 4 || len(rep.Findings) != 4 {
+			t.Fatalf("expected 4 web-hardcoded-color warnings for tufte literals, got %+v", rep)
+		}
+		wantLines := []struct {
+			line int
+			lit  string
+		}{
+			{line: 6, lit: "#8b1e1e"},
+			{line: 7, lit: "#854d0e"},
+			{line: 8, lit: "#166534"},
+			{line: 9, lit: "#ded8ca"},
+		}
+		for i, w := range wantLines {
+			got := rep.Findings[i]
+			if got.File != "mixed.css" || got.Line != w.line || got.RuleID != review.RuleWebHardcodedColor || !strings.Contains(got.Message, w.lit) {
+				t.Errorf("finding[%d] = %+v, want line %d rule %s containing %s", i, got, w.line, review.RuleWebHardcodedColor, w.lit)
+			}
+		}
+
+		// Also verify a contract with custom token paths (not overriding Merge's light/dark accent/paper keys)
+		// does NOT inherit tufte defaults (#8b1e1e, #fffff8, #e06c60).
+		customContract := `---
+design_tokens:
+  color:
+    brand:
+      oxford: { value: "#1E3A8A", type: "color" }
+  radius:
+    card: { value: "8px" }
+  elevation:
+    card: { value: "0 1px 2px rgba(15, 23, 42, 0.08)", type: "shadow" }
+---
+`
+		if err := os.WriteFile(filepath.Join(dir, "CUSTOM_DESIGN.md"), []byte(customContract), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		customLeakCSS := `.custom-ok {
+  color: #1E3A8A;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.tufte-unmerged {
+  color: #8b1e1e;
+  background-color: #fffff8;
+  border-color: #e06c60;
+}
+`
+		if err := os.WriteFile(filepath.Join(dir, "custom.css"), []byte(customLeakCSS), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cCode, cOut, cErr := runWebReview(t, dir, "review", "--tokens", "CUSTOM_DESIGN.md", "custom.css", "--format", "json")
+		if cCode != cli.ExitSuccess {
+			t.Fatalf("custom non-strict warnings: got exit %d, want %d (stderr=%s, stdout=%s)", cCode, cli.ExitSuccess, cErr, cOut)
+		}
+		cRep := decodeWebReport(t, cOut)
+		if cRep.WarnCount != 3 || len(cRep.Findings) != 3 {
+			t.Fatalf("expected 3 web-hardcoded-color warnings on custom contract, got %+v", cRep)
+		}
+		for i, wantLit := range []string{"#8b1e1e", "#fffff8", "#e06c60"} {
+			got := cRep.Findings[i]
+			if got.RuleID != review.RuleWebHardcodedColor || !strings.Contains(got.Message, wantLit) {
+				t.Errorf("custom finding[%d] = %+v, want %s containing %s", i, got, review.RuleWebHardcodedColor, wantLit)
+			}
+		}
+	})
+
 	t.Run("upward datafolio.yaml tokens contract is honored automatically when --tokens is omitted", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "DESIGN.md"), []byte(oxfordDesignMD), 0o644); err != nil {

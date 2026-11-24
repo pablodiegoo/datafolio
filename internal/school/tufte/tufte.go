@@ -1,11 +1,15 @@
 package tufte
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 
 	"github.com/pablodiegoo/datafolio/internal/school"
 )
+
+//go:embed tufte-school.md
+var skillReferenceMD []byte
 
 func init() {
 	school.Register(New())
@@ -122,4 +126,11 @@ func (t *Tufte) Policy() school.ReviewPolicy {
 		MinContrastNormal: 4.5,
 		MinContrastLarge:  3.0,
 	}
+}
+
+// SkillReference returns the relative Skill Bundle path and Markdown editorial reference for Tufte.
+func (t *Tufte) SkillReference() (string, []byte) {
+	out := make([]byte, len(skillReferenceMD))
+	copy(out, skillReferenceMD)
+	return "references/tufte-school.md", out
 }

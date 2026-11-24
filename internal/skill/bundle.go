@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/pablodiegoo/datafolio/internal/school"
 )
 
 //go:embed bundle
@@ -32,8 +35,19 @@ type PEP723Metadata struct {
 	RawTOML        string
 }
 
-// BundleFiles returns all embedded Skill Bundle files sorted deterministically by relative path.
+// BundleFiles returns all Skill Bundle files for the default School ("tufte" when registered)
+// sorted deterministically by relative path.
 func BundleFiles() ([]BundleFile, error) {
+	var defSchool school.School
+	if s, err := school.Lookup("tufte"); err == nil {
+		defSchool = s
+	}
+	return BundleFilesForSchool(defSchool)
+}
+
+// BundleFilesForSchool returns the shared Skill Bundle files merged with the selected
+// School's editorial reference (via s.SkillReference()), sorted deterministically by relative path.
+func BundleFilesForSchool(s school.School) ([]BundleFile, error) {
 	var files []BundleFile
 	err := fs.WalkDir(bundleFS, "bundle", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -47,14 +61,10 @@ func BundleFiles() ([]BundleFile, error) {
 		if err != nil {
 			return err
 		}
-		mode := fs.FileMode(0o644)
-		if path.Ext(rel) == ".py" {
-			mode = 0o755
-		}
 		files = append(files, BundleFile{
 			RelPath: rel,
 			Content: raw,
-			Mode:    mode,
+			Mode:    bundleFileMode(rel),
 			SHA256:  sha256Hex(raw),
 		})
 		return nil
@@ -62,10 +72,47 @@ func BundleFiles() ([]BundleFile, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if s != nil {
+		relPath, refContent := s.SkillReference()
+		trimmed := strings.TrimSpace(relPath)
+		if trimmed != "" {
+			cleanRel := path.Clean(filepath.ToSlash(trimmed))
+			if path.IsAbs(cleanRel) || cleanRel == "." || cleanRel == ".." || strings.HasPrefix(cleanRel, "../") {
+				return nil, fmt.Errorf("invalid skill reference path %q from school %q", relPath, s.Name())
+			}
+			contentCopy := append([]byte(nil), refContent...)
+			refFile := BundleFile{
+				RelPath: cleanRel,
+				Content: contentCopy,
+				Mode:    bundleFileMode(cleanRel),
+				SHA256:  sha256Hex(contentCopy),
+			}
+			replaced := false
+			for i := range files {
+				if files[i].RelPath == cleanRel {
+					files[i] = refFile
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				files = append(files, refFile)
+			}
+		}
+	}
+
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].RelPath < files[j].RelPath
 	})
 	return files, nil
+}
+
+func bundleFileMode(rel string) fs.FileMode {
+	if path.Ext(rel) == ".py" {
+		return 0o755
+	}
+	return 0o644
 }
 
 var (

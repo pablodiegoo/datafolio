@@ -527,12 +527,22 @@ func hasTokenRootKey(m map[string]any) bool {
 	return false
 }
 
-func extractMarkdownTokenRoots(raw []byte) ([]map[string]any, error) {
+// YAMLBlock represents an extracted YAML frontmatter or fenced YAML block from Markdown,
+// paired with the 1-based line number of its first content line.
+type YAMLBlock struct {
+	Content     []byte
+	StartLine   int
+	Frontmatter bool
+}
+
+// ExtractYAMLBlocks extracts YAML frontmatter (when present) and fenced yaml/yml code blocks
+// from Markdown source in document order along with their 1-based content start line numbers.
+func ExtractYAMLBlocks(raw []byte) []YAMLBlock {
 	text := strings.TrimPrefix(string(raw), "\xef\xbb\xbf")
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 
-	var roots []map[string]any
+	var blocks []YAMLBlock
 	startIdx := 0
 
 	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
@@ -546,13 +556,11 @@ func extractMarkdownTokenRoots(raw []byte) ([]map[string]any, error) {
 		}
 		if endIdx > 0 {
 			fmBody := strings.Join(lines[1:endIdx], "\n")
-			m, err := decodeYAMLMap([]byte(fmBody))
-			if err != nil {
-				return nil, fmt.Errorf("invalid YAML frontmatter in Markdown token contract: %w", err)
-			}
-			if hasTokenRootKey(m) {
-				roots = append(roots, m)
-			}
+			blocks = append(blocks, YAMLBlock{
+				Content:     []byte(fmBody),
+				StartLine:   2,
+				Frontmatter: true,
+			})
 			startIdx = endIdx + 1
 		}
 	}
@@ -561,45 +569,29 @@ func extractMarkdownTokenRoots(raw []byte) ([]map[string]any, error) {
 	fenceChar := byte(0)
 	fenceLen := 0
 	isYAML := false
+	blockStartLine := 0
 	var buf []string
 
 	for i := startIdx; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if !inFence {
-			if len(trimmed) >= 3 && (trimmed[0] == '`' || trimmed[0] == '~') {
-				fc := trimmed[0]
-				n := 0
-				for n < len(trimmed) && trimmed[n] == fc {
-					n++
-				}
-				if n >= 3 {
-					info := strings.ToLower(strings.TrimSpace(trimmed[n:]))
-					fields := strings.Fields(info)
-					lang := ""
-					if len(fields) > 0 {
-						lang = fields[0]
-					}
-					inFence = true
-					fenceChar = fc
-					fenceLen = n
-					isYAML = lang == "yaml" || lang == "yml"
-					buf = buf[:0]
-					continue
-				}
+			if fc, fl, lang, ok := parseFenceStart(trimmed); ok {
+				inFence = true
+				fenceChar = fc
+				fenceLen = fl
+				isYAML = lang == "yaml" || lang == "yml"
+				blockStartLine = i + 2
+				buf = buf[:0]
 			}
 			continue
 		}
 
 		if isClosingFence(trimmed, fenceChar, fenceLen) {
 			if isYAML {
-				blockYAML := strings.Join(buf, "\n")
-				m, err := decodeYAMLMap([]byte(blockYAML))
-				if err != nil {
-					return nil, fmt.Errorf("invalid fenced YAML block in Markdown token contract: %w", err)
-				}
-				if hasTokenRootKey(m) {
-					roots = append(roots, m)
-				}
+				blocks = append(blocks, YAMLBlock{
+					Content:   []byte(strings.Join(buf, "\n")),
+					StartLine: blockStartLine,
+				})
 			}
 			inFence = false
 			isYAML = false
@@ -612,6 +604,44 @@ func extractMarkdownTokenRoots(raw []byte) ([]map[string]any, error) {
 		}
 	}
 
+	return blocks
+}
+
+func parseFenceStart(trimmed string) (byte, int, string, bool) {
+	if len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return 0, 0, "", false
+	}
+	fc := trimmed[0]
+	n := 0
+	for n < len(trimmed) && trimmed[n] == fc {
+		n++
+	}
+	if n < 3 {
+		return 0, 0, "", false
+	}
+	info := strings.ToLower(strings.TrimSpace(trimmed[n:]))
+	fields := strings.Fields(info)
+	lang := ""
+	if len(fields) > 0 {
+		lang = fields[0]
+	}
+	return fc, n, lang, true
+}
+
+func extractMarkdownTokenRoots(raw []byte) ([]map[string]any, error) {
+	var roots []map[string]any
+	for _, blk := range ExtractYAMLBlocks(raw) {
+		m, err := decodeYAMLMap(blk.Content)
+		if err != nil {
+			if blk.Frontmatter {
+				return nil, fmt.Errorf("invalid YAML frontmatter in Markdown token contract: %w", err)
+			}
+			return nil, fmt.Errorf("invalid fenced YAML block in Markdown token contract: %w", err)
+		}
+		if hasTokenRootKey(m) {
+			roots = append(roots, m)
+		}
+	}
 	if len(roots) == 0 {
 		return nil, fmt.Errorf("no design_tokens or token YAML blocks found in Markdown document")
 	}
