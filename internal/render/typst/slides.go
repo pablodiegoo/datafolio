@@ -120,9 +120,10 @@ func emitSlideShowRules(b *strings.Builder) {
 	b.WriteString("#show heading.where(level: 1): it => text(size: 18.5pt, weight: \"medium\", fill: df-ink)[#it.body]\n")
 	b.WriteString("#show heading.where(level: 2): set block(sticky: true, above: 0.8em, below: 0.4em)\n")
 	b.WriteString("#show heading.where(level: 2): set text(size: 13pt, weight: \"medium\", fill: df-ink)\n")
-	b.WriteString("#show heading.where(level: 3): set block(sticky: true, above: 0.65em, below: 0.35em)\n")
+	b.WriteString("#show heading.where(level: 3): set block(sticky: true, above: 0.65em, below: 0.55em)\n")
 	b.WriteString("#show heading.where(level: 3): set text(size: 11.5pt, weight: \"medium\", style: \"italic\", fill: df-ink)\n")
 	EmitSharedShowRules(b, 1, "0.7em")
+	b.WriteString("#show figure.caption: it => block(width: 100%, align(left)[#it])\n")
 }
 
 func buildLogicalSlides(d *doc.SourceDocument, deckTitle string, appendBib bool, bibTitle string) []logicalSlide {
@@ -190,7 +191,7 @@ func hasCoverMetadata(m doc.Metadata) bool {
 func isCoverIntroSlide(s doc.Slide) bool {
 	for _, blk := range s.Blocks {
 		switch blk.(type) {
-		case *doc.ParagraphBlock, *doc.MarginNoteBlock, *doc.BlockquoteBlock, *doc.ListBlock:
+		case *doc.ParagraphBlock, *doc.MarginNoteBlock, *doc.BlockquoteBlock, *doc.ListBlock, *doc.KPIBlock:
 			continue
 		default:
 			return false
@@ -249,12 +250,34 @@ func renderLogicalSlide(
 		if sl.Kicker != "" {
 			coverMeta.Kicker = sl.Kicker
 		}
-		EmitCoverBlock(b, coverMeta, deckTitle, "10%", true)
-		if len(sl.Blocks) > 0 {
+		coverHasMargin := blocksHaveMarginAnnotations(sl.Blocks)
+		coverCtx := *ctx
+		coverCtx.MinBodyHeadingLevel = 2
+		coverCtx.FullWidthColumns = !coverHasMargin
+
+		var marginNotes []doc.Block
+		var bodyBlocks []doc.Block
+		for _, blk := range sl.Blocks {
+			if _, ok := blk.(*doc.MarginNoteBlock); ok && coverHasMargin {
+				marginNotes = append(marginNotes, blk)
+			} else {
+				bodyBlocks = append(bodyBlocks, blk)
+			}
+		}
+
+		if len(marginNotes) > 0 {
+			if err := RenderBlocks(b, marginNotes, &coverCtx); err != nil {
+				return err
+			}
+		}
+		if coverHasMargin {
+			EmitCoverBlockWithWidth(b, coverMeta, deckTitle, "5%", "df-main-w", false)
+		} else {
+			EmitCoverBlock(b, coverMeta, deckTitle, "8%", true)
+		}
+		if len(bodyBlocks) > 0 {
 			b.WriteString("#v(0.8em)\n")
-			coverCtx := *ctx
-			coverCtx.MinBodyHeadingLevel = 2
-			if err := RenderBlocks(b, sl.Blocks, &coverCtx); err != nil {
+			if err := RenderBlocks(b, bodyBlocks, &coverCtx); err != nil {
 				return err
 			}
 		}

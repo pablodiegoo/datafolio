@@ -424,7 +424,7 @@ func renderFigure(b *strings.Builder, node *doc.FigureBlock, state *renderState,
 			))
 		}
 		if node.Caption != "" && node.Source != "" {
-			b.WriteByte(' ')
+			b.WriteString(" &middot; ")
 		}
 		if node.Source != "" {
 			b.WriteString(fmt.Sprintf(

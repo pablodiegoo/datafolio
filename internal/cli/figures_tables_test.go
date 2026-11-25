@@ -95,6 +95,7 @@ Table: Regional performance summary
 		`<td>North</td>`,
 		"Figure 1:",
 		"Revenue trajectory across quarters",
+		"&middot;",
 		"Telemetry pipeline",
 		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40">`,
 		"Figure 2:",

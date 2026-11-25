@@ -824,6 +824,98 @@ As shown in [@tufte2001].
 	})
 }
 
+func TestBuildSlidesAsymmetricCoverMarginAndFullWidthKPI(t *testing.T) {
+	t.Run("cover with margin annotations uses main width and places margin notes before cover block", func(t *testing.T) {
+		dir := t.TempDir()
+		cacheDir := filepath.Join(dir, "cache")
+		md := `---
+title: Asymmetric Cover Deck
+author: Ada Lovelace
+---
+
+:::note
+**Scope** Right-column cover margin note.
+:::
+
+Intro paragraph[^cov].
+
+[^cov]: **Footnote** Cover sidenote.
+
+---
+
+# Second Slide
+
+Body.
+`
+		if err := os.WriteFile(filepath.Join(dir, "cover.md"), []byte(md), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var capturedTyp string
+		runner := &toolchain.FakeTypstRunner{
+			OnCompile: func(_ context.Context, req toolchain.CompileRequest) error {
+				raw, _ := os.ReadFile(req.InputPath)
+				capturedTyp = string(raw)
+				return os.WriteFile(req.OutputPath, []byte("%PDF-1.7\n"), 0o644)
+			},
+			QueryOutput: []byte(`[]`),
+		}
+		code, _, errOut := runSlidesCLI(t, dir, cacheDir, runner, func(string) (string, error) { return "/usr/bin/typst", nil }, "build", "cover.md", "--to", "slides")
+		if code != cli.ExitSuccess {
+			t.Fatalf("failed (%d): %s", code, errOut)
+		}
+		noteIdx := strings.Index(capturedTyp, "#df-margin-note[")
+		coverIdx := strings.Index(capturedTyp, "#block(width: df-main-w)[")
+		if noteIdx < 0 || coverIdx < 0 || noteIdx > coverIdx {
+			t.Fatalf("expected #df-margin-note before #block(width: df-main-w), got noteIdx=%d coverIdx=%d\n%s", noteIdx, coverIdx, capturedTyp)
+		}
+	})
+
+	t.Run("cover without margin annotations keeps wide cover and expands KPI strip", func(t *testing.T) {
+		dir := t.TempDir()
+		cacheDir := filepath.Join(dir, "cache")
+		md := `---
+title: Minimalist Wide Cover
+---
+
+:::kpi
+- **Slides**: 10 | 10 min
+- **Assets**: 110 | B3 IBrX-100
+:::
+
+---
+
+# Next Slide
+
+Body.
+`
+		if err := os.WriteFile(filepath.Join(dir, "widecover.md"), []byte(md), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var capturedTyp string
+		runner := &toolchain.FakeTypstRunner{
+			OnCompile: func(_ context.Context, req toolchain.CompileRequest) error {
+				raw, _ := os.ReadFile(req.InputPath)
+				capturedTyp = string(raw)
+				return os.WriteFile(req.OutputPath, []byte("%PDF-1.7\n"), 0o644)
+			},
+			QueryOutput: []byte(`[]`),
+		}
+		code, _, errOut := runSlidesCLI(t, dir, cacheDir, runner, func(string) (string, error) { return "/usr/bin/typst", nil }, "build", "widecover.md", "--to", "slides")
+		if code != cli.ExitSuccess {
+			t.Fatalf("failed (%d): %s", code, errOut)
+		}
+		if !strings.Contains(capturedTyp, "#df-wide[\n#df-kpi[") {
+			t.Errorf("expected wide KPI strip on cover without margin annotations, got:\n%s", capturedTyp)
+		}
+		if strings.Contains(capturedTyp, `index: 2, title: ""`) {
+			t.Errorf("expected KPI block to stay in cover slide 1 rather than creating an extra slide:\n%s", capturedTyp)
+		}
+		if !strings.Contains(capturedTyp, `#show figure.caption: it => block(width: 100%, align(left)[#it])`) {
+			t.Errorf("expected left-aligned figure.caption rule in slides output")
+		}
+	})
+}
+
 type slidesStrictRealTypstRunner struct {
 	t             *testing.T
 	lastQueryJSON []byte

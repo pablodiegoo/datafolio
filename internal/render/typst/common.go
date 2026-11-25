@@ -586,7 +586,7 @@ func EmitTypstHelpers(b *strings.Builder) {
 
 // EmitSharedShowRules writes Typst show rules common to both `document` and `slides` Formats.
 func EmitSharedShowRules(b *strings.Builder, secLevel int, figGap string) {
-	b.WriteString("#show raw.where(block: false): it => box(fill: df-paper-subtle, inset: (x: 2.5pt, y: 0pt), outset: (y: 1.5pt), stroke: 0.4pt + df-rule)[#text(font: df-font-mono, size: 8.8pt)[#it]]\n")
+	b.WriteString("#show raw.where(block: false): it => box(fill: df-paper-subtle, inset: (x: 2.5pt, y: 0pt), outset: (y: 0.6pt), stroke: 0.4pt + df-rule)[#text(font: df-font-mono, size: 0.86em)[#it]]\n")
 	b.WriteString("#show link: set text(fill: df-accent)\n")
 	fmt.Fprintf(b, "#show figure: set block(above: %s, below: %s)\n", figGap, figGap)
 	b.WriteString("#show figure.where(kind: table): set block(breakable: true)\n")
@@ -597,6 +597,16 @@ func EmitSharedShowRules(b *strings.Builder, secLevel int, figGap string) {
 
 // EmitCoverBlock writes the editorial cover typography block (kicker, title, subtitle, heavy rule, author/date).
 func EmitCoverBlock(b *strings.Builder, meta doc.Metadata, fallbackTitle, topSpace string, useWide bool) {
+	if useWide {
+		EmitCoverBlockWithWidth(b, meta, fallbackTitle, topSpace, "df-printable-w", true)
+		return
+	}
+	EmitCoverBlockWithWidth(b, meta, fallbackTitle, topSpace, "df-printable-w", false)
+}
+
+// EmitCoverBlockWithWidth writes the editorial cover typography block inside an explicit width
+// expression, optionally wrapping with `#df-wide` when spanning both main and margin columns.
+func EmitCoverBlockWithWidth(b *strings.Builder, meta doc.Metadata, fallbackTitle, topSpace, widthExpr string, useWide bool) {
 	title := strings.TrimSpace(meta.Title)
 	if title == "" {
 		title = fallbackTitle
@@ -604,7 +614,10 @@ func EmitCoverBlock(b *strings.Builder, meta doc.Metadata, fallbackTitle, topSpa
 	if useWide {
 		b.WriteString("#df-wide[\n")
 	} else {
-		b.WriteString("#block(width: df-printable-w)[\n")
+		if strings.TrimSpace(widthExpr) == "" {
+			widthExpr = "df-printable-w"
+		}
+		fmt.Fprintf(b, "#block(width: %s)[\n", widthExpr)
 	}
 	fmt.Fprintf(b, "  #v(%s)\n", topSpace)
 	if meta.Kicker != "" {
@@ -923,7 +936,7 @@ func RenderBlock(b *strings.Builder, blk doc.Block, ctx *RenderContext) error {
 		}
 		b.WriteString("]\n")
 	case *doc.KPIBlock:
-		renderKPI(b, node)
+		renderKPI(b, node, ctx)
 	case *doc.ColumnsBlock:
 		if err := renderColumns(b, node, ctx); err != nil {
 			return err
@@ -1061,7 +1074,7 @@ func renderFigure(b *strings.Builder, node *doc.FigureBlock, ctx *RenderContext)
 			b.WriteString(EscapeMarkup(node.Caption))
 		}
 		if node.Caption != "" && node.Source != "" {
-			b.WriteString(" ")
+			b.WriteString(" · ")
 		}
 		if node.Source != "" {
 			fmt.Fprintf(b, "#text(fill: df-muted)[*%s:* %s]",
@@ -1141,13 +1154,17 @@ func renderCompactBlocks(b *strings.Builder, blocks []doc.Block, ctx *RenderCont
 	return nil
 }
 
-func renderKPI(b *strings.Builder, node *doc.KPIBlock) {
+func renderKPI(b *strings.Builder, node *doc.KPIBlock, ctx *RenderContext) {
 	if len(node.Items) == 0 {
 		return
 	}
 	cols := make([]string, len(node.Items))
 	for i := range cols {
 		cols[i] = "1fr"
+	}
+	wrapWide := ctx != nil && ctx.FullWidthColumns && ctx.TopLevel
+	if wrapWide {
+		b.WriteString("#df-wide[\n")
 	}
 	b.WriteString("#df-kpi[\n")
 	fmt.Fprintf(b, "  #grid(columns: (%s), column-gutter: 12pt,\n", strings.Join(cols, ", "))
@@ -1170,6 +1187,9 @@ func renderKPI(b *strings.Builder, node *doc.KPIBlock) {
 	}
 	b.WriteString("  )\n")
 	b.WriteString("]\n")
+	if wrapWide {
+		b.WriteString("]\n")
+	}
 }
 
 func renderColumns(b *strings.Builder, node *doc.ColumnsBlock, ctx *RenderContext) error {
